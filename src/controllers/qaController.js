@@ -5,6 +5,7 @@
 const retrievalService = require('../services/retrievalService');
 const geminiService = require('../services/geminiService');
 const AppError = require('../errors/AppError');
+const { buildBasedOnDocs } = require('../utils/citations');
 
 /**
  * Answer a question using RAG
@@ -67,53 +68,26 @@ exports.answerQuestion = async (req, res, next) => {
       return next(llmError);
     }
 
-    // Map Gemini citations to our format
-    const citations = geminiResponse.citations.map(citation => {
-      // Find matching chunk
-      const chunk = chunks.find(c => 
-        c.chunkId === citation.chunkId || 
-        (c.docId === citation.docId && 
-         c.startChar <= citation.startChar && 
-         c.endChar >= citation.endChar)
-      );
-
-      if (chunk) {
-        // Extract quote from chunk (max 200 chars)
-        const quoteStart = Math.max(0, citation.startChar - chunk.startChar);
-        const quoteEnd = Math.min(
-          chunk.text.length,
-          quoteStart + 200,
-          citation.endChar - chunk.startChar
-        );
-        const quote = chunk.text.slice(quoteStart, quoteEnd).trim();
-
-        return {
-          docId: chunk.docId,
-          docName: chunk.docName,
-          chunkId: chunk.chunkId,
-          startChar: chunk.startChar + quoteStart,
-          endChar: chunk.startChar + quoteEnd,
-          quote: quote || chunk.text.slice(0, 200).trim()
-        };
-      }
-
-      // Fallback if chunk not found
-      return {
-        docId: citation.docId || '',
-        docName: citation.docName || '',
-        chunkId: citation.chunkId || '',
-        startChar: citation.startChar || 0,
-        endChar: citation.endChar || 0,
-        quote: citation.quote || ''
-      };
-    });
+    // Build standardized citations:
+    // - validates LLM citations against retrieval (discard hallucinated docId/chunkId)
+    // - falls back to top retrieved chunks if citations are missing/invalid
+    let basedOnDocs = [];
+    try {
+      basedOnDocs = buildBasedOnDocs({
+        llmCitations: geminiResponse && Array.isArray(geminiResponse.citations) ? geminiResponse.citations : null,
+        retrievedChunks: chunks,
+        maxCitations: 3
+      });
+    } catch (_) {
+      basedOnDocs = [];
+    }
 
     // Response
     res.status(200).json({
       question: question.trim(),
       answer: geminiResponse.answer,
       confidence: geminiResponse.confidence || 'medium',
-      based_on_docs: citations,
+      based_on_docs: basedOnDocs,
       retrieval: {
         docLimit: safeDocLimit,
         topK: safeTopK

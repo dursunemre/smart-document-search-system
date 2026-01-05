@@ -67,8 +67,14 @@ async function generateAnswer(question, chunks) {
       const cleanedText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       parsedResponse = JSON.parse(cleanedText);
     } catch (parseError) {
-      // If JSON parsing fails, throw error
-      throw new Error(`Invalid JSON response from LLM: ${parseError.message}`);
+      // If JSON parsing fails, return a safe fallback instead of failing the whole request
+      // (Controller will still build citations from retrieval as needed.)
+      return {
+        answer: (text || '').toString().trim(),
+        citations: [],
+        confidence: 'low',
+        parseError: true
+      };
     }
 
     // Validate response structure
