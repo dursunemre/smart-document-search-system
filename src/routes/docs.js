@@ -14,7 +14,8 @@ const uploadMiddleware = (req, res, next) => {
         err.statusCode = 413;
         err.message = 'File size too large. Max 10MB.';
       } else if (err.code === 'INVALID_FILE_TYPE') {
-        err.statusCode = 400;
+        err.statusCode = 415;
+        err.message = 'Unsupported file type. Only PDF and TXT are allowed.';
       } else if (!err.statusCode) {
         err.statusCode = 400; // Default to bad request for upload errors
       }

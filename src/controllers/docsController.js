@@ -2,6 +2,8 @@ const path = require('path');
 const fs = require('fs');
 const hashFile = require('../utils/hashFile');
 const documentsRepo = require('../repositories/documentsRepo');
+const { extractTextFromFile } = require('../services/textExtractor');
+const AppError = require('../errors/AppError');
 
 /**
  * Upload a document
@@ -16,6 +18,12 @@ exports.uploadDocument = async (req, res, next) => {
 
   try {
     const { filename, originalname, mimetype, size, path: storedPath } = req.file;
+
+    // Extra safety: validate MIME here too (multer should already filter)
+    if (mimetype !== 'application/pdf' && mimetype !== 'text/plain') {
+      try { fs.unlinkSync(storedPath); } catch (_) {}
+      throw new AppError({ statusCode: 415, code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Unsupported file type' });
+    }
 
     // Calculate SHA256 hash
     const sha256 = await hashFile(storedPath);
@@ -32,6 +40,16 @@ exports.uploadDocument = async (req, res, next) => {
       return next(error);
     }
 
+    // Extract text (PDF/TXT)
+    let extracted = null;
+    try {
+      extracted = await extractTextFromFile({ path: storedPath, mimeType: mimetype });
+    } catch (err) {
+      // On extraction failures, remove the uploaded file to avoid storing unusable content
+      try { fs.unlinkSync(storedPath); } catch (_) {}
+      throw err;
+    }
+
     // Create document record in database
     const doc = documentsRepo.createDocument({
       originalName: originalname,
@@ -42,7 +60,14 @@ exports.uploadDocument = async (req, res, next) => {
       sha256: sha256
     });
 
-    res.status(201).json(doc);
+    const preview = extracted && extracted.text ? extracted.text.slice(0, 200) : '';
+    res.status(201).json({
+      ...doc,
+      extractedText: {
+        charCount: extracted ? extracted.charCount : 0,
+        preview
+      }
+    });
   } catch (error) {
     // If it's already a formatted error, pass it through
     if (error.statusCode && error.code) {
