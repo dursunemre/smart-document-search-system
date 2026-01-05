@@ -5,4 +5,8 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
+uploads/
+client/node_modules/
+client/dist/
+client/.env
+client/.env.*
