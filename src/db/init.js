@@ -34,6 +34,24 @@ function initSchema() {
       }
     }
 
+    // Add summary columns if they don't exist
+    const summaryColumns = [
+      { name: 'summary_short', type: 'TEXT' },
+      { name: 'summary_short_created_at', type: 'TEXT' },
+      { name: 'summary_short_model', type: 'TEXT' }
+    ];
+
+    for (const col of summaryColumns) {
+      try {
+        db.exec(`ALTER TABLE documents ADD COLUMN ${col.name} ${col.type}`);
+      } catch (err) {
+        // Column already exists, ignore
+        if (!err.message.includes('duplicate column name')) {
+          throw err;
+        }
+      }
+    }
+
     // Create indexes
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_documents_created_at 

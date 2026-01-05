@@ -93,7 +93,10 @@ function getDocumentById(id) {
     size: row.size,
     sha256: row.sha256,
     createdAt: row.created_at,
-    contentText: row.content_text || null
+    contentText: row.content_text || null,
+    summaryShort: row.summary_short || null,
+    summaryShortCreatedAt: row.summary_short_created_at || null,
+    summaryShortModel: row.summary_short_model || null
   };
 }
 
@@ -294,8 +297,39 @@ function getDocumentBySha256(sha256) {
     size: row.size,
     sha256: row.sha256,
     createdAt: row.created_at,
-    contentText: row.content_text || null
+    contentText: row.content_text || null,
+    summaryShort: row.summary_short || null,
+    summaryShortCreatedAt: row.summary_short_created_at || null,
+    summaryShortModel: row.summary_short_model || null
   };
+}
+
+/**
+ * Update short summary for a document
+ * @param {string} docId - Document ID
+ * @param {Object} summaryData - Summary data
+ * @param {string} summaryData.summary - Summary text
+ * @param {string} summaryData.model - Model used to generate summary
+ * @param {string} [summaryData.createdAt] - Creation timestamp (ISO), defaults to now
+ * @returns {Object} - Updated document record
+ */
+function updateShortSummary(docId, { summary, model, createdAt }) {
+  const summaryCreatedAt = createdAt || new Date().toISOString();
+
+  const stmt = db.prepare(`
+    UPDATE documents 
+    SET summary_short = ?,
+        summary_short_created_at = ?,
+        summary_short_model = ?
+    WHERE id = ?
+  `);
+
+  try {
+    stmt.run(summary, summaryCreatedAt, model, docId);
+    return getDocumentById(docId);
+  } catch (error) {
+    throw error;
+  }
 }
 
 module.exports = {
@@ -303,6 +337,7 @@ module.exports = {
   getDocumentById,
   listDocuments,
   searchDocumentsByKeyword,
-  getDocumentBySha256
+  getDocumentBySha256,
+  updateShortSummary
 };
 

@@ -32,6 +32,7 @@ router.get('/', controller.listDocuments);
 router.get('/search', controller.searchDocuments);
 router.get('/:id', controller.getDocument);
 router.get('/:id/download', controller.downloadDocument);
+router.post('/:id/summary/short', controller.generateShortSummary);
 
 module.exports = router;
 

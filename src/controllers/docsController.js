@@ -3,6 +3,7 @@ const fs = require('fs');
 const hashFile = require('../utils/hashFile');
 const documentsRepo = require('../repositories/documentsRepo');
 const { extractTextFromFile } = require('../services/textExtractor');
+const { generateShortSummary } = require('../services/summaryService');
 const AppError = require('../errors/AppError');
 
 /**
@@ -189,6 +190,107 @@ exports.downloadDocument = (req, res, next) => {
     dbError.statusCode = 500;
     dbError.code = 'DB_ERROR';
     return next(dbError);
+  }
+};
+
+/**
+ * Generate short summary for a document
+ */
+exports.generateShortSummary = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Get document from database
+    const document = documentsRepo.getDocumentById(id);
+
+    if (!document) {
+      const error = new Error('Document not found');
+      error.statusCode = 404;
+      error.code = 'NOT_FOUND';
+      return next(error);
+    }
+
+    // Get text content
+    let text = '';
+
+    // Try to get from DB first
+    if (document.contentText && document.contentText.trim().length > 0) {
+      text = document.contentText;
+    } else {
+      // Extract from file
+      try {
+        const extracted = await extractTextFromFile({
+          path: document.storedPath,
+          mimeType: document.mimeType
+        });
+        text = extracted.text;
+      } catch (extractError) {
+        const error = new Error('Text extraction failed');
+        error.statusCode = 422;
+        error.code = 'EXTRACTION_FAILED';
+        error.cause = extractError;
+        return next(error);
+      }
+    }
+
+    // Validate text
+    if (!text || text.trim().length === 0) {
+      const error = new Error('Text extraction failed');
+      error.statusCode = 422;
+      error.code = 'EXTRACTION_FAILED';
+      return next(error);
+    }
+
+    // Generate summary using Gemini
+    let summaryResult;
+    try {
+      summaryResult = await generateShortSummary({
+        docId: document.id,
+        text: text,
+        docName: document.originalName
+      });
+    } catch (error) {
+      // Check if it's an API key error
+      if (error.message.includes('GEMINI_API_KEY')) {
+        const apiError = new Error('GEMINI_API_KEY is not configured');
+        apiError.statusCode = 500;
+        apiError.code = 'CONFIG_ERROR';
+        return next(apiError);
+      }
+
+      // Other Gemini errors
+      const llmError = new Error('LLM error');
+      llmError.statusCode = 502;
+      llmError.code = 'LLM_ERROR';
+      llmError.cause = error;
+      return next(llmError);
+    }
+
+    // Save summary to database
+    const updatedDoc = documentsRepo.updateShortSummary(document.id, {
+      summary: summaryResult.summary,
+      model: summaryResult.model
+    });
+
+    // Response
+    res.status(200).json({
+      docId: updatedDoc.id,
+      docName: updatedDoc.originalName,
+      summaryShort: updatedDoc.summaryShort,
+      model: updatedDoc.summaryShortModel,
+      createdAt: updatedDoc.summaryShortCreatedAt
+    });
+  } catch (error) {
+    // If it's already a formatted error, pass it through
+    if (error.statusCode && error.code) {
+      return next(error);
+    }
+
+    // Unexpected error
+    const internalError = new Error('Internal server error');
+    internalError.statusCode = 500;
+    internalError.code = 'INTERNAL_ERROR';
+    return next(internalError);
   }
 };
 
