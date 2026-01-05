@@ -5,9 +5,13 @@
 const express = require('express');
 const router = express.Router();
 const healthRouter = require('./health');
+const docsRouter = require('./docs');
 
 // Health check route'unu ekle
 router.use('/', healthRouter);
+
+// Document upload routes
+router.use('/api/docs', docsRouter);
 
 // 404 handler (bu route'a ulaşılırsa)
 router.use('*', (req, res, next) => {
@@ -17,4 +21,3 @@ router.use('*', (req, res, next) => {
 });
 
 module.exports = router;
-
