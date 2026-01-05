@@ -36,19 +36,15 @@ describe('POST /api/docs/upload', () => {
   });
 
   test('should return 415 for invalid file type', async () => {
-    // Create a temporary invalid file
-    const invalidFilePath = path.join(__dirname, 'fixtures', 'invalid.txt');
-    fs.writeFileSync(invalidFilePath, 'test content');
+    // Create a temporary invalid file (wrong extension + mime)
+    const invalidFilePath = path.join(__dirname, 'fixtures', 'invalid.jpg');
+    fs.writeFileSync(invalidFilePath, 'not-an-image-but-extension-tests-filter');
 
-    // Mock the file as having wrong MIME type by creating a fake request
-    // Since multer filters before our code, we test the multer error handling
     const response = await request(app)
       .post('/api/docs/upload')
-      .attach('file', invalidFilePath)
-      .set('Content-Type', 'multipart/form-data');
+      .attach('file', invalidFilePath, { filename: 'invalid.jpg', contentType: 'image/jpeg' })
+      .expect(415);
 
-    // If multer rejects it, we might get 415 or 400
-    expect([400, 415]).toContain(response.status);
     expect(response.body).toHaveProperty('error');
 
     // Cleanup

@@ -1,6 +1,3 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-
 const { buildBasedOnDocs, sanitizeQuote } = require('../src/utils/citations');
 
 function makeChunks() {
@@ -46,10 +43,10 @@ test('buildBasedOnDocs: uses valid LLM citations when they match retrieved chunk
   ];
 
   const out = buildBasedOnDocs({ llmCitations, retrievedChunks, maxCitations: 3 });
-  assert.equal(out.length, 1);
-  assert.equal(out[0].chunkId, 'doc123_chunk_0');
-  assert.equal(out[0].docId, 'doc123');
-  assert.ok(out[0].quote.length <= 200);
+  expect(out).toHaveLength(1);
+  expect(out[0].chunkId).toBe('doc123_chunk_0');
+  expect(out[0].docId).toBe('doc123');
+  expect(out[0].quote.length).toBeLessThanOrEqual(200);
 });
 
 test('buildBasedOnDocs: discards hallucinated docId/chunkId and falls back to retrieved chunks', () => {
@@ -59,24 +56,24 @@ test('buildBasedOnDocs: discards hallucinated docId/chunkId and falls back to re
   ];
 
   const out = buildBasedOnDocs({ llmCitations, retrievedChunks, maxCitations: 3 });
-  assert.equal(out.length, 3);
-  assert.equal(out[0].chunkId, retrievedChunks[0].chunkId);
+  expect(out).toHaveLength(3);
+  expect(out[0].chunkId).toBe(retrievedChunks[0].chunkId);
 });
 
 test('buildBasedOnDocs: falls back when LLM citations are missing', () => {
   const retrievedChunks = makeChunks();
   const out = buildBasedOnDocs({ llmCitations: null, retrievedChunks, maxCitations: 2 });
-  assert.equal(out.length, 2);
-  assert.equal(out[0].chunkId, retrievedChunks[0].chunkId);
-  assert.equal(out[1].chunkId, retrievedChunks[1].chunkId);
+  expect(out).toHaveLength(2);
+  expect(out[0].chunkId).toBe(retrievedChunks[0].chunkId);
+  expect(out[1].chunkId).toBe(retrievedChunks[1].chunkId);
 });
 
 test('sanitizeQuote: trims, collapses whitespace, and caps to 200 chars', () => {
   const s = sanitizeQuote('  hello\nworld\t\t' + 'x'.repeat(300) + '   ');
-  assert.ok(!s.includes('\n'));
-  assert.ok(!s.includes('\t'));
-  assert.ok(s.startsWith('hello world'));
-  assert.ok(s.length <= 200);
+  expect(s.includes('\n')).toBe(false);
+  expect(s.includes('\t')).toBe(false);
+  expect(s.startsWith('hello world')).toBe(true);
+  expect(s.length).toBeLessThanOrEqual(200);
 });
 
 

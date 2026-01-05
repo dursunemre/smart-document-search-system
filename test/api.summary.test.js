@@ -2,9 +2,7 @@
  * Summary endpoint tests
  */
 const request = require('supertest');
-const app = require('../src/app');
 const path = require('path');
-const summaryService = require('../src/services/summaryService');
 
 // Mock summary service
 jest.mock('../src/services/summaryService', () => ({
@@ -12,20 +10,16 @@ jest.mock('../src/services/summaryService', () => ({
   generateLongSummary: jest.fn()
 }));
 
+const summaryService = require('../src/services/summaryService');
+const app = require('../src/app');
+
 describe('POST /api/docs/:id/summary/short', () => {
   const sampleTxtPath = path.join(__dirname, 'fixtures', 'sample.txt');
-  let uploadedDocId = null;
-
-  beforeAll(async () => {
-    // Upload a document before summary tests
-    const uploadResponse = await request(app)
-      .post('/api/docs/upload')
-      .attach('file', sampleTxtPath);
-
-    if (uploadResponse.status === 201) {
-      uploadedDocId = uploadResponse.body.id;
-    }
-  });
+  async function uploadDoc() {
+    const uploadResponse = await request(app).post('/api/docs/upload').attach('file', sampleTxtPath);
+    expect(uploadResponse.status).toBe(201);
+    return uploadResponse.body.id;
+  }
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -41,6 +35,7 @@ describe('POST /api/docs/:id/summary/short', () => {
   });
 
   test('should generate short summary successfully', async () => {
+    const uploadedDocId = await uploadDoc();
     // Mock summary service
     summaryService.generateShortSummary.mockResolvedValue({
       summary: 'This is a short summary of the document.',
@@ -60,6 +55,7 @@ describe('POST /api/docs/:id/summary/short', () => {
   });
 
   test('should return 502 when Gemini service fails', async () => {
+    const uploadedDocId = await uploadDoc();
     // Mock Gemini error
     summaryService.generateShortSummary.mockRejectedValue(new Error('LLM API error'));
 
@@ -72,36 +68,36 @@ describe('POST /api/docs/:id/summary/short', () => {
   });
 
   test('should return 422 when text extraction fails', async () => {
-    // This test requires a document that fails extraction
-    // For now, we test with a valid document and mock the extraction failure
-    // In a real scenario, you might need a corrupted file
-    summaryService.generateShortSummary.mockRejectedValue(
-      new Error('Text extraction failed')
-    );
+    const documentsRepo = require('../src/repositories/documentsRepo');
+    const textExtractor = require('../src/services/textExtractor');
+    const db = require('../src/db');
 
-    // Since we're mocking, the actual extraction won't fail
-    // But we can test the error handling path
+    const uploadedDocId = await uploadDoc();
+    // Force controller to use extraction path (not contentText from DB)
+    db.prepare('UPDATE documents SET content_text = NULL WHERE id = ?').run(uploadedDocId);
+
+    const spy = jest
+      .spyOn(textExtractor, 'extractTextFromFile')
+      .mockRejectedValue(new Error('extraction failed'));
+
     const response = await request(app)
-      .post(`/api/docs/${uploadedDocId}/summary/short`);
+      .post(`/api/docs/${uploadedDocId}/summary/short`)
+      .expect(422);
 
-    // Should either succeed (if text exists) or fail with appropriate error
-    expect([200, 422, 502]).toContain(response.status);
+    expect(response.body).toHaveProperty('error');
+    expect(response.body.error).toHaveProperty('code', 'EXTRACTION_FAILED');
+
+    spy.mockRestore();
   });
 });
 
 describe('POST /api/docs/:id/summary/long', () => {
   const sampleTxtPath = path.join(__dirname, 'fixtures', 'sample.txt');
-  let uploadedDocId = null;
-
-  beforeAll(async () => {
-    const uploadResponse = await request(app)
-      .post('/api/docs/upload')
-      .attach('file', sampleTxtPath);
-
-    if (uploadResponse.status === 201) {
-      uploadedDocId = uploadResponse.body.id;
-    }
-  });
+  async function uploadDoc() {
+    const uploadResponse = await request(app).post('/api/docs/upload').attach('file', sampleTxtPath);
+    expect(uploadResponse.status).toBe(201);
+    return uploadResponse.body.id;
+  }
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -118,6 +114,7 @@ describe('POST /api/docs/:id/summary/long', () => {
   });
 
   test('should return 400 for invalid level', async () => {
+    const uploadedDocId = await uploadDoc();
     const response = await request(app)
       .post(`/api/docs/${uploadedDocId}/summary/long`)
       .send({ level: 'invalid', format: 'structured' })
@@ -128,6 +125,7 @@ describe('POST /api/docs/:id/summary/long', () => {
   });
 
   test('should return 400 for invalid format', async () => {
+    const uploadedDocId = await uploadDoc();
     const response = await request(app)
       .post(`/api/docs/${uploadedDocId}/summary/long`)
       .send({ level: 'medium', format: 'invalid' })
@@ -138,6 +136,7 @@ describe('POST /api/docs/:id/summary/long', () => {
   });
 
   test('should generate long summary with medium level and structured format', async () => {
+    const uploadedDocId = await uploadDoc();
     summaryService.generateLongSummary.mockResolvedValue({
       summary: 'This is a medium-length structured summary.',
       model: 'gemini-2.0-flash-exp',
@@ -160,6 +159,7 @@ describe('POST /api/docs/:id/summary/long', () => {
   });
 
   test('should generate long summary with long level and bullets format', async () => {
+    const uploadedDocId = await uploadDoc();
     summaryService.generateLongSummary.mockResolvedValue({
       summary: '- Point 1\n- Point 2\n- Point 3',
       model: 'gemini-2.0-flash-exp',
@@ -183,6 +183,7 @@ describe('POST /api/docs/:id/summary/long', () => {
   });
 
   test('should use default values when level and format not provided', async () => {
+    const uploadedDocId = await uploadDoc();
     summaryService.generateLongSummary.mockResolvedValue({
       summary: 'Default summary',
       model: 'gemini-2.0-flash-exp',
@@ -200,6 +201,7 @@ describe('POST /api/docs/:id/summary/long', () => {
   });
 
   test('should return cached summary if same level and format exist', async () => {
+    const uploadedDocId = await uploadDoc();
     // First, generate a summary
     summaryService.generateLongSummary.mockResolvedValue({
       summary: 'Cached summary',
@@ -228,6 +230,7 @@ describe('POST /api/docs/:id/summary/long', () => {
   });
 
   test('should return 502 when Gemini service fails', async () => {
+    const uploadedDocId = await uploadDoc();
     summaryService.generateLongSummary.mockRejectedValue(new Error('LLM API error'));
 
     const response = await request(app)

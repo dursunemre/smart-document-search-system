@@ -2,24 +2,18 @@
  * Q&A endpoint tests
  */
 const request = require('supertest');
-const app = require('../src/app');
 const path = require('path');
-const geminiService = require('../src/services/geminiService');
 
 // Mock Gemini service
 jest.mock('../src/services/geminiService', () => ({
   generateAnswer: jest.fn()
 }));
 
+const geminiService = require('../src/services/geminiService');
+const app = require('../src/app');
+
 describe('POST /api/qa', () => {
   const sampleTxtPath = path.join(__dirname, 'fixtures', 'sample.txt');
-
-  beforeAll(async () => {
-    // Upload a document before Q&A tests
-    await request(app)
-      .post('/api/docs/upload')
-      .attach('file', sampleTxtPath);
-  });
 
   beforeEach(() => {
     // Reset mock before each test
@@ -47,6 +41,9 @@ describe('POST /api/qa', () => {
   });
 
   test('should answer question successfully', async () => {
+    // Ensure at least 1 doc exists so retrieval returns chunks and Gemini is called
+    await request(app).post('/api/docs/upload').attach('file', sampleTxtPath).expect(201);
+
     // Mock Gemini response
     geminiService.generateAnswer.mockResolvedValue({
       answer: 'This is a test answer about Node.js and Express.',
@@ -82,6 +79,8 @@ describe('POST /api/qa', () => {
   });
 
   test('should return 502 when Gemini service fails', async () => {
+    await request(app).post('/api/docs/upload').attach('file', sampleTxtPath).expect(201);
+
     // Mock Gemini error
     geminiService.generateAnswer.mockRejectedValue(new Error('LLM API error'));
 
@@ -112,6 +111,8 @@ describe('POST /api/qa', () => {
   });
 
   test('should respect topK and docLimit parameters', async () => {
+    await request(app).post('/api/docs/upload').attach('file', sampleTxtPath).expect(201);
+
     geminiService.generateAnswer.mockResolvedValue({
       answer: 'Test answer',
       citations: [],

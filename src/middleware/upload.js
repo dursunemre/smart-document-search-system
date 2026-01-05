@@ -42,10 +42,11 @@ const fileFilter = (req, file, cb) => {
   if (allowedMimeTypes.includes(file.mimetype) && allowedExtensions.includes(ext)) {
     cb(null, true);
   } else {
-    // Create custom error for handling
-    const error = new Error('Invalid file type. Only PDF and TXT are allowed.');
-    error.code = 'INVALID_FILE_TYPE';
-    cb(error, false);
+    // IMPORTANT:
+    // Do NOT throw from fileFilter; it can abort the request stream and cause ECONNRESET in tests/clients.
+    // Instead, mark a validation flag on req and tell multer to skip this file while still consuming the stream.
+    req.fileValidationError = 'UNSUPPORTED_MEDIA_TYPE';
+    cb(null, false);
   }
 };
 

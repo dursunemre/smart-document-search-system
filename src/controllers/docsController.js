@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const hashFile = require('../utils/hashFile');
 const documentsRepo = require('../repositories/documentsRepo');
-const { extractTextFromFile } = require('../services/textExtractor');
+const textExtractor = require('../services/textExtractor');
 const { generateShortSummary, generateLongSummary } = require('../services/summaryService');
 const AppError = require('../errors/AppError');
 
@@ -33,7 +33,7 @@ exports.uploadDocument = async (req, res, next) => {
     const existingDoc = documentsRepo.getDocumentBySha256(sha256);
     if (existingDoc) {
       // Delete the uploaded file since it's a duplicate
-      fs.unlinkSync(storedPath);
+      try { fs.unlinkSync(storedPath); } catch (_) {}
       
       const error = new Error('Duplicate document');
       error.statusCode = 409;
@@ -44,7 +44,7 @@ exports.uploadDocument = async (req, res, next) => {
     // Extract text (PDF/TXT)
     let extracted = null;
     try {
-      extracted = await extractTextFromFile({ path: storedPath, mimeType: mimetype });
+      extracted = await textExtractor.extractTextFromFile({ path: storedPath, mimeType: mimetype });
     } catch (err) {
       // On extraction failures, remove the uploaded file to avoid storing unusable content
       try { fs.unlinkSync(storedPath); } catch (_) {}
@@ -219,7 +219,7 @@ exports.generateShortSummary = async (req, res, next) => {
     } else {
       // Extract from file
       try {
-        const extracted = await extractTextFromFile({
+        const extracted = await textExtractor.extractTextFromFile({
           path: document.storedPath,
           mimeType: document.mimeType
         });
@@ -357,7 +357,7 @@ exports.generateLongSummary = async (req, res, next) => {
       text = document.contentText;
     } else {
       try {
-        const extracted = await extractTextFromFile({
+        const extracted = await textExtractor.extractTextFromFile({
           path: document.storedPath,
           mimeType: document.mimeType
         });

@@ -7,18 +7,9 @@ const path = require('path');
 
 describe('GET /api/docs/search', () => {
   const sampleTxtPath = path.join(__dirname, 'fixtures', 'sample.txt');
-  let uploadedDocId = null;
-
-  beforeAll(async () => {
-    // Upload a document before search tests
-    const uploadResponse = await request(app)
-      .post('/api/docs/upload')
-      .attach('file', sampleTxtPath);
-
-    if (uploadResponse.status === 201) {
-      uploadedDocId = uploadResponse.body.id;
-    }
-  });
+  async function ensureDoc() {
+    await request(app).post('/api/docs/upload').attach('file', sampleTxtPath).expect(201);
+  }
 
   test('should return 400 when query is missing', async () => {
     const response = await request(app)
@@ -39,6 +30,7 @@ describe('GET /api/docs/search', () => {
   });
 
   test('should search documents successfully', async () => {
+    await ensureDoc();
     const response = await request(app)
       .get('/api/docs/search?q=sample')
       .expect(200);
@@ -51,6 +43,7 @@ describe('GET /api/docs/search', () => {
   });
 
   test('should respect limit parameter', async () => {
+    await ensureDoc();
     const response = await request(app)
       .get('/api/docs/search?q=test&limit=5')
       .expect(200);
@@ -61,6 +54,7 @@ describe('GET /api/docs/search', () => {
   });
 
   test('should clamp limit to maximum 50', async () => {
+    await ensureDoc();
     const response = await request(app)
       .get('/api/docs/search?q=test&limit=100')
       .expect(200);
@@ -69,6 +63,7 @@ describe('GET /api/docs/search', () => {
   });
 
   test('should respect offset parameter', async () => {
+    await ensureDoc();
     const response = await request(app)
       .get('/api/docs/search?q=test&offset=0')
       .expect(200);
