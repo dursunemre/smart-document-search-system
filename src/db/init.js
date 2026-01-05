@@ -20,30 +20,50 @@ function initSchema() {
         size INTEGER NOT NULL,
         sha256 TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        content_text TEXT
+        content_text TEXT,
+        summary_short TEXT,
+        summary_short_created_at TEXT,
+        summary_short_model TEXT,
+        summary_long TEXT,
+        summary_long_created_at TEXT,
+        summary_long_model TEXT,
+        summary_long_level TEXT
       )
     `);
 
-    // Add content_text column if it doesn't exist (migration for existing databases)
-    try {
-      db.exec(`ALTER TABLE documents ADD COLUMN content_text TEXT`);
-    } catch (err) {
-      // Column already exists, ignore
-      if (!err.message.includes('duplicate column name')) {
-        throw err;
+    function columnExists(tableName, columnName) {
+      try {
+        const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
+        return rows.some((r) => r && r.name === columnName);
+      } catch (_) {
+        return false;
       }
     }
+
+    function ensureColumn(tableName, columnName, columnType) {
+      if (columnExists(tableName, columnName)) return;
+      db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`);
+    }
+
+    // Ensure columns exist (migrations for existing databases)
+    // NOTE: SQLite doesn't support IF NOT EXISTS for ADD COLUMN.
+    // We use PRAGMA table_info() checks before ALTER TABLE.
+    try { ensureColumn('documents', 'content_text', 'TEXT'); } catch (_) {}
 
     // Add summary columns if they don't exist
     const summaryColumns = [
       { name: 'summary_short', type: 'TEXT' },
       { name: 'summary_short_created_at', type: 'TEXT' },
-      { name: 'summary_short_model', type: 'TEXT' }
+      { name: 'summary_short_model', type: 'TEXT' },
+      { name: 'summary_long', type: 'TEXT' },
+      { name: 'summary_long_created_at', type: 'TEXT' },
+      { name: 'summary_long_model', type: 'TEXT' },
+      { name: 'summary_long_level', type: 'TEXT' }
     ];
 
     for (const col of summaryColumns) {
       try {
-        db.exec(`ALTER TABLE documents ADD COLUMN ${col.name} ${col.type}`);
+        ensureColumn('documents', col.name, col.type);
       } catch (err) {
         // Column already exists, ignore
         if (!err.message.includes('duplicate column name')) {
@@ -115,4 +135,5 @@ function initSchema() {
 }
 
 module.exports = { initSchema };
+
 

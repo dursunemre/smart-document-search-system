@@ -3,7 +3,7 @@ const fs = require('fs');
 const hashFile = require('../utils/hashFile');
 const documentsRepo = require('../repositories/documentsRepo');
 const { extractTextFromFile } = require('../services/textExtractor');
-const { generateShortSummary } = require('../services/summaryService');
+const { generateShortSummary, generateLongSummary } = require('../services/summaryService');
 const AppError = require('../errors/AppError');
 
 /**
@@ -287,6 +287,144 @@ exports.generateShortSummary = async (req, res, next) => {
     }
 
     // Unexpected error
+    const internalError = new Error('Internal server error');
+    internalError.statusCode = 500;
+    internalError.code = 'INTERNAL_ERROR';
+    return next(internalError);
+  }
+};
+
+function parseLevelField(levelField) {
+  if (!levelField || typeof levelField !== 'string') return { level: null, format: null };
+  // stored as "level:format"
+  const [level, format] = levelField.split(':');
+  return { level: level || null, format: format || null };
+}
+
+/**
+ * Generate long summary for a document (on-demand, cached)
+ * POST /api/docs/:id/summary/long
+ * body: { level?: "medium"|"long", format?: "structured"|"bullets" }
+ */
+exports.generateLongSummary = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const level = (req.body && req.body.level) ? String(req.body.level) : 'medium';
+    const format = (req.body && req.body.format) ? String(req.body.format) : 'structured';
+
+    const allowedLevels = new Set(['medium', 'long']);
+    const allowedFormats = new Set(['structured', 'bullets']);
+
+    if (!allowedLevels.has(level) || !allowedFormats.has(format)) {
+      const error = new Error('Invalid level or format');
+      error.statusCode = 400;
+      error.code = 'BAD_REQUEST';
+      return next(error);
+    }
+
+    const document = documentsRepo.getDocumentById(id);
+    if (!document) {
+      const error = new Error('Document not found');
+      error.statusCode = 404;
+      error.code = 'NOT_FOUND';
+      return next(error);
+    }
+
+    // Cache behavior:
+    // If summary_long exists AND matches requested level/format, return as-is.
+    const cachedMeta = parseLevelField(document.summaryLongLevel);
+    if (
+      document.summaryLong &&
+      typeof document.summaryLong === 'string' &&
+      document.summaryLong.trim().length > 0 &&
+      cachedMeta.level === level &&
+      cachedMeta.format === format
+    ) {
+      return res.status(200).json({
+        docId: document.id,
+        docName: document.originalName,
+        summaryLong: document.summaryLong,
+        level,
+        format,
+        model: document.summaryLongModel || (process.env.GEMINI_MODEL || 'gemini-2.5-flash'),
+        createdAt: document.summaryLongCreatedAt || null
+      });
+    }
+
+    // Get text content (prefer DB)
+    let text = '';
+    if (document.contentText && document.contentText.trim().length > 0) {
+      text = document.contentText;
+    } else {
+      try {
+        const extracted = await extractTextFromFile({
+          path: document.storedPath,
+          mimeType: document.mimeType
+        });
+        text = extracted.text;
+      } catch (extractError) {
+        const error = new Error('Text extraction failed');
+        error.statusCode = 422;
+        error.code = 'EXTRACTION_FAILED';
+        error.cause = extractError;
+        return next(error);
+      }
+    }
+
+    if (!text || text.trim().length === 0) {
+      const error = new Error('Text extraction failed');
+      error.statusCode = 422;
+      error.code = 'EXTRACTION_FAILED';
+      return next(error);
+    }
+
+    // Generate summary via Gemini
+    let result;
+    try {
+      result = await generateLongSummary({
+        docId: document.id,
+        docName: document.originalName,
+        text,
+        level,
+        format
+      });
+    } catch (error) {
+      if (error.message.includes('GEMINI_API_KEY')) {
+        const apiError = new Error('GEMINI_API_KEY is not configured');
+        apiError.statusCode = 500;
+        apiError.code = 'CONFIG_ERROR';
+        return next(apiError);
+      }
+
+      const llmError = new Error('LLM error');
+      llmError.statusCode = 502;
+      llmError.code = 'LLM_ERROR';
+      llmError.cause = error;
+      return next(llmError);
+    }
+
+    const createdAt = new Date().toISOString();
+    const updatedDoc = documentsRepo.updateLongSummary(document.id, {
+      summary: result.summary,
+      model: result.model,
+      createdAt,
+      level,
+      format
+    });
+
+    return res.status(200).json({
+      docId: updatedDoc.id,
+      docName: updatedDoc.originalName,
+      summaryLong: updatedDoc.summaryLong,
+      level,
+      format,
+      model: updatedDoc.summaryLongModel,
+      createdAt: updatedDoc.summaryLongCreatedAt
+    });
+  } catch (error) {
+    if (error.statusCode && error.code) {
+      return next(error);
+    }
     const internalError = new Error('Internal server error');
     internalError.statusCode = 500;
     internalError.code = 'INTERNAL_ERROR';

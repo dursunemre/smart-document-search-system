@@ -33,6 +33,7 @@ router.get('/search', controller.searchDocuments);
 router.get('/:id', controller.getDocument);
 router.get('/:id/download', controller.downloadDocument);
 router.post('/:id/summary/short', controller.generateShortSummary);
+router.post('/:id/summary/long', controller.generateLongSummary);
 
 module.exports = router;
 
