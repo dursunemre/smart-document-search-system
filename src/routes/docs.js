@@ -28,6 +28,8 @@ const uploadMiddleware = (req, res, next) => {
 // Routes
 router.post('/upload', uploadMiddleware, controller.uploadDocument);
 router.get('/', controller.listDocuments);
+router.get('/search', controller.searchDocuments);
+router.get('/:id', controller.getDocument);
 router.get('/:id/download', controller.downloadDocument);
 
 module.exports = router;

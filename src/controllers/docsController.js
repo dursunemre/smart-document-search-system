@@ -1,10 +1,12 @@
 const path = require('path');
 const fs = require('fs');
+const hashFile = require('../utils/hashFile');
+const documentsRepo = require('../repositories/documentsRepo');
 
 /**
  * Upload a document
  */
-exports.uploadDocument = (req, res, next) => {
+exports.uploadDocument = async (req, res, next) => {
   if (!req.file) {
     const error = new Error('No file uploaded');
     error.statusCode = 400;
@@ -12,59 +14,149 @@ exports.uploadDocument = (req, res, next) => {
     return next(error);
   }
 
-  const { filename, originalname, mimetype, size, path: storedPath } = req.file;
+  try {
+    const { filename, originalname, mimetype, size, path: storedPath } = req.file;
 
-  res.status(201).json({
-    id: filename,
-    originalName: originalname,
-    mimeType: mimetype,
-    size: size,
-    storedName: filename,
-    storedPath: storedPath,
-    uploadedAt: new Date().toISOString()
-  });
+    // Calculate SHA256 hash
+    const sha256 = await hashFile(storedPath);
+
+    // Check for duplicate
+    const existingDoc = documentsRepo.getDocumentBySha256(sha256);
+    if (existingDoc) {
+      // Delete the uploaded file since it's a duplicate
+      fs.unlinkSync(storedPath);
+      
+      const error = new Error('Duplicate document');
+      error.statusCode = 409;
+      error.code = 'DUPLICATE_DOC';
+      return next(error);
+    }
+
+    // Create document record in database
+    const doc = documentsRepo.createDocument({
+      originalName: originalname,
+      storedName: filename,
+      storedPath: storedPath,
+      mimeType: mimetype,
+      size: size,
+      sha256: sha256
+    });
+
+    res.status(201).json(doc);
+  } catch (error) {
+    // If it's already a formatted error, pass it through
+    if (error.statusCode && error.code) {
+      return next(error);
+    }
+
+    // Database error
+    const dbError = new Error('Database error');
+    dbError.statusCode = 500;
+    dbError.code = 'DB_ERROR';
+    return next(dbError);
+  }
 };
 
 /**
- * List all uploaded documents (Optional)
+ * List all uploaded documents
  */
 exports.listDocuments = (req, res, next) => {
-  const uploadDir = path.join(process.cwd(), 'uploads');
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
 
-  fs.readdir(uploadDir, (err, files) => {
-    if (err) {
-      if (err.code === 'ENOENT') {
-        // Directory doesn't exist yet, return empty
-        return res.json([]);
-      }
-      return next(err);
-    }
-    res.json(files);
-  });
+    const documents = documentsRepo.listDocuments({ limit, offset });
+    res.json(documents);
+  } catch (error) {
+    const dbError = new Error('Database error');
+    dbError.statusCode = 500;
+    dbError.code = 'DB_ERROR';
+    return next(dbError);
+  }
 };
 
 /**
- * Download a document by ID (filename) (Optional)
+ * Get document by ID
+ */
+exports.getDocument = (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const document = documentsRepo.getDocumentById(id);
+
+    if (!document) {
+      const error = new Error('Document not found');
+      error.statusCode = 404;
+      error.code = 'NOT_FOUND';
+      return next(error);
+    }
+
+    res.json(document);
+  } catch (error) {
+    const dbError = new Error('Database error');
+    dbError.statusCode = 500;
+    dbError.code = 'DB_ERROR';
+    return next(dbError);
+  }
+};
+
+/**
+ * Search documents by keyword
+ */
+exports.searchDocuments = (req, res, next) => {
+  try {
+    const q = req.query.q || '';
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+
+    if (!q.trim()) {
+      const error = new Error('Search query is required');
+      error.statusCode = 400;
+      error.code = 'INVALID_QUERY';
+      return next(error);
+    }
+
+    const documents = documentsRepo.searchDocumentsByKeyword(q, { limit, offset });
+    res.json(documents);
+  } catch (error) {
+    const dbError = new Error('Database error');
+    dbError.statusCode = 500;
+    dbError.code = 'DB_ERROR';
+    return next(dbError);
+  }
+};
+
+/**
+ * Download a document by ID
  */
 exports.downloadDocument = (req, res, next) => {
-  const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-  // Basic security check for path traversal on ID
-  if (id.includes('..') || id.includes('/') || id.includes('\\')) {
-    const error = new Error('Invalid file ID');
-    error.statusCode = 400;
-    return next(error);
+    // Get document from database
+    const document = documentsRepo.getDocumentById(id);
+
+    if (!document) {
+      const error = new Error('File not found');
+      error.statusCode = 404;
+      error.code = 'NOT_FOUND';
+      return next(error);
+    }
+
+    // Check if file exists on disk
+    if (!fs.existsSync(document.storedPath)) {
+      const error = new Error('File not found on disk');
+      error.statusCode = 404;
+      error.code = 'NOT_FOUND';
+      return next(error);
+    }
+
+    // Download with original filename
+    res.download(document.storedPath, document.originalName);
+  } catch (error) {
+    const dbError = new Error('Database error');
+    dbError.statusCode = 500;
+    dbError.code = 'DB_ERROR';
+    return next(dbError);
   }
-
-  const filePath = path.join(process.cwd(), 'uploads', id);
-
-  if (!fs.existsSync(filePath)) {
-    const error = new Error('File not found');
-    error.statusCode = 404;
-    error.code = 'NOT_FOUND';
-    return next(error);
-  }
-
-  res.download(filePath);
 };
 

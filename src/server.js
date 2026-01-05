@@ -2,7 +2,11 @@
  * Server başlatma dosyası
  */
 require('dotenv').config();
+const { initSchema } = require('./db/init');
 const app = require('./app');
+
+// Initialize database schema
+initSchema();
 
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
