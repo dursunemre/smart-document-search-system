@@ -4,7 +4,12 @@ const fs = require('fs');
 const sanitizeFilename = require('../utils/sanitizeFilename');
 
 // Ensure uploads directory exists
-const uploadDir = path.join(process.cwd(), 'uploads');
+// Use test directory in test environment
+const isTest = process.env.NODE_ENV === 'test';
+const uploadDir = isTest 
+  ? (process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads-test'))
+  : (process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads'));
+
 if (!fs.existsSync(uploadDir)) {
   try {
     fs.mkdirSync(uploadDir, { recursive: true });

@@ -1,0 +1,12 @@
+This is a sample text document for testing purposes.
+
+It contains multiple paragraphs and sentences to test document upload, search, and Q&A functionality.
+
+The document discusses various topics including:
+- Node.js backend development
+- Express framework usage
+- SQLite database integration
+- Document processing and text extraction
+
+This content can be used to test keyword search, full-text search, and question-answering capabilities of the system.
+
