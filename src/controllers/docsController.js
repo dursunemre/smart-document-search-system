@@ -57,7 +57,8 @@ exports.uploadDocument = async (req, res, next) => {
       storedPath: storedPath,
       mimeType: mimetype,
       size: size,
-      sha256: sha256
+      sha256: sha256,
+      contentText: extracted ? extracted.text : null
     });
 
     const preview = extracted && extracted.text ? extracted.text.slice(0, 200) : '';
@@ -130,19 +131,25 @@ exports.getDocument = (req, res, next) => {
 exports.searchDocuments = (req, res, next) => {
   try {
     const q = req.query.q || '';
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = parseInt(req.query.offset) || 0;
 
-    if (!q.trim()) {
-      const error = new Error('Search query is required');
+    if (!q || !q.trim()) {
+      const error = new Error('Missing query');
       error.statusCode = 400;
-      error.code = 'INVALID_QUERY';
+      error.code = 'BAD_REQUEST';
       return next(error);
     }
 
-    const documents = documentsRepo.searchDocumentsByKeyword(q, { limit, offset });
-    res.json(documents);
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+
+    const result = documentsRepo.searchDocumentsByKeyword(q.trim(), { limit, offset });
+    res.json(result);
   } catch (error) {
+    // If it's already a formatted error, pass it through
+    if (error.statusCode && error.code) {
+      return next(error);
+    }
+
     const dbError = new Error('Database error');
     dbError.statusCode = 500;
     dbError.code = 'DB_ERROR';

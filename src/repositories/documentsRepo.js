@@ -14,6 +14,7 @@ const { v4: uuidv4 } = require('uuid');
  * @param {string} doc.mimeType - MIME type
  * @param {number} doc.size - File size in bytes
  * @param {string} doc.sha256 - SHA256 hash
+ * @param {string} [doc.contentText] - Extracted text content
  * @returns {Object} - Created document record
  */
 function createDocument(doc) {
@@ -23,8 +24,8 @@ function createDocument(doc) {
   const stmt = db.prepare(`
     INSERT INTO documents (
       id, original_name, stored_name, stored_path, 
-      mime_type, size, sha256, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      mime_type, size, sha256, created_at, content_text
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   try {
@@ -36,8 +37,25 @@ function createDocument(doc) {
       doc.mimeType,
       doc.size,
       doc.sha256,
-      createdAt
+      createdAt,
+      doc.contentText || null
     );
+
+    // FTS5 triggers should handle the sync automatically, but we can also manually insert
+    // if triggers didn't work (for existing documents without triggers)
+    try {
+      const ftsStmt = db.prepare(`
+        INSERT INTO documents_fts(doc_id, original_name, content_text)
+        SELECT id, original_name, COALESCE(content_text, '')
+        FROM documents WHERE id = ?
+      `);
+      ftsStmt.run(id);
+    } catch (ftsError) {
+      // FTS5 table might not exist, ignore
+      if (!ftsError.message.includes('no such table')) {
+        console.warn('FTS5 insert failed (non-critical):', ftsError.message);
+      }
+    }
 
     return getDocumentById(id);
   } catch (error) {
@@ -74,7 +92,8 @@ function getDocumentById(id) {
     mimeType: row.mime_type,
     size: row.size,
     sha256: row.sha256,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    contentText: row.content_text || null
   };
 }
 
@@ -102,40 +121,155 @@ function listDocuments({ limit = 50, offset = 0 } = {}) {
     mimeType: row.mime_type,
     size: row.size,
     sha256: row.sha256,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    contentText: row.content_text || null
   }));
 }
 
 /**
- * Search documents by keyword
- * Searches in original_name and stored_path
+ * Search documents by keyword using FTS5 or LIKE fallback
  * @param {string} q - Search query
  * @param {Object} options - Query options
  * @param {number} options.limit - Maximum number of results
  * @param {number} options.offset - Number of results to skip
- * @returns {Array} - Array of matching document records
+ * @returns {Object} - Search result with mode, total, and results
  */
 function searchDocumentsByKeyword(q, { limit = 50, offset = 0 } = {}) {
-  const searchTerm = `%${q}%`;
-  const stmt = db.prepare(`
-    SELECT * FROM documents 
-    WHERE original_name LIKE ? OR stored_path LIKE ?
-    ORDER BY created_at DESC 
-    LIMIT ? OFFSET ?
-  `);
+  // Validate and sanitize limit/offset
+  const safeLimit = Math.min(Math.max(parseInt(limit) || 50, 1), 50);
+  const safeOffset = Math.max(parseInt(offset) || 0, 0);
 
-  const rows = stmt.all(searchTerm, searchTerm, limit, offset);
+  // Try FTS5 search first
+  try {
+    // Escape special FTS5 characters and build query
+    // FTS5 uses a simple syntax: words are ANDed by default, use OR for multiple terms
+    const ftsQuery = q.trim().split(/\s+/).map(term => {
+      // Escape special characters for FTS5
+      return term.replace(/["'*]/g, '');
+    }).filter(term => term.length > 0).join(' OR ');
 
-  return rows.map(row => ({
-    id: row.id,
-    originalName: row.original_name,
-    storedName: row.stored_name,
-    storedPath: row.stored_path,
-    mimeType: row.mime_type,
-    size: row.size,
-    sha256: row.sha256,
-    createdAt: row.created_at
-  }));
+    if (!ftsQuery) {
+      // Empty query after processing
+      return {
+        mode: 'fts5',
+        query: q,
+        limit: safeLimit,
+        offset: safeOffset,
+        total: 0,
+        results: []
+      };
+    }
+
+    // Check if FTS5 table exists
+    const tableCheck = db.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name='documents_fts'
+    `).get();
+
+    if (!tableCheck) {
+      throw new Error('FTS5 table not found');
+    }
+
+    // FTS5 search query
+    // Note: snippet() column indices: 0=doc_id, 1=original_name, 2=content_text
+    const ftsStmt = db.prepare(`
+      SELECT 
+        d.id,
+        d.original_name,
+        d.stored_name,
+        d.stored_path,
+        d.mime_type,
+        d.size,
+        d.sha256,
+        d.created_at,
+        d.content_text,
+        bm25(documents_fts) as score,
+        snippet(documents_fts, 1, '<mark>', '</mark>', '...', 32) as highlight_original_name,
+        snippet(documents_fts, 2, '<mark>', '</mark>', '...', 32) as highlight_content_text
+      FROM documents_fts
+      JOIN documents d ON d.id = documents_fts.doc_id
+      WHERE documents_fts MATCH ?
+      ORDER BY score ASC, d.created_at DESC
+      LIMIT ? OFFSET ?
+    `);
+
+    const rows = ftsStmt.all(ftsQuery, safeLimit, safeOffset);
+
+    // Get total count
+    const countStmt = db.prepare(`
+      SELECT COUNT(*) as total
+      FROM documents_fts
+      WHERE documents_fts MATCH ?
+    `);
+    const countResult = countStmt.get(ftsQuery);
+    const total = countResult ? countResult.total : 0;
+
+    const results = rows.map(row => {
+      const highlights = [];
+      if (row.highlight_original_name) highlights.push(row.highlight_original_name);
+      if (row.highlight_content_text) highlights.push(row.highlight_content_text);
+
+      return {
+        id: row.id,
+        originalName: row.original_name,
+        mimeType: row.mime_type,
+        size: row.size,
+        createdAt: row.created_at,
+        score: row.score || null,
+        highlights: highlights.length > 0 ? highlights : undefined
+      };
+    });
+
+    return {
+      mode: 'fts5',
+      query: q,
+      limit: safeLimit,
+      offset: safeOffset,
+      total: total,
+      results: results
+    };
+  } catch (ftsError) {
+    // FTS5 not available or query failed, fallback to LIKE
+    console.warn('FTS5 search failed, using LIKE fallback:', ftsError.message);
+
+    const searchTerm = `%${q}%`;
+    const likeStmt = db.prepare(`
+      SELECT * FROM documents 
+      WHERE original_name LIKE ? OR stored_path LIKE ? OR COALESCE(content_text, '') LIKE ?
+      ORDER BY created_at DESC 
+      LIMIT ? OFFSET ?
+    `);
+
+    const rows = likeStmt.all(searchTerm, searchTerm, searchTerm, safeLimit, safeOffset);
+
+    // Get total count for LIKE search
+    const countStmt = db.prepare(`
+      SELECT COUNT(*) as total
+      FROM documents 
+      WHERE original_name LIKE ? OR stored_path LIKE ? OR COALESCE(content_text, '') LIKE ?
+    `);
+    const countResult = countStmt.get(searchTerm, searchTerm, searchTerm);
+    const total = countResult ? countResult.total : 0;
+
+    const results = rows.map(row => ({
+      id: row.id,
+      originalName: row.original_name,
+      mimeType: row.mime_type,
+      size: row.size,
+      createdAt: row.created_at,
+      score: null,
+      highlights: undefined
+    }));
+
+    return {
+      mode: 'like',
+      query: q,
+      limit: safeLimit,
+      offset: safeOffset,
+      total: total,
+      results: results
+    };
+  }
 }
 
 /**
@@ -159,7 +293,8 @@ function getDocumentBySha256(sha256) {
     mimeType: row.mime_type,
     size: row.size,
     sha256: row.sha256,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    contentText: row.content_text || null
   };
 }
 

@@ -19,9 +19,20 @@ function initSchema() {
         mime_type TEXT NOT NULL,
         size INTEGER NOT NULL,
         sha256 TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        content_text TEXT
       )
     `);
+
+    // Add content_text column if it doesn't exist (migration for existing databases)
+    try {
+      db.exec(`ALTER TABLE documents ADD COLUMN content_text TEXT`);
+    } catch (err) {
+      // Column already exists, ignore
+      if (!err.message.includes('duplicate column name')) {
+        throw err;
+      }
+    }
 
     // Create indexes
     db.exec(`
@@ -33,6 +44,50 @@ function initSchema() {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_sha256 
       ON documents(sha256)
     `);
+
+    // Create FTS5 virtual table for full-text search
+    // Try to create FTS5 table, fallback gracefully if FTS5 is not available
+    try {
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+          doc_id UNINDEXED,
+          original_name,
+          content_text
+        )
+      `);
+
+      // Create triggers to keep FTS5 in sync with documents table
+      // Insert trigger
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON documents BEGIN
+          INSERT INTO documents_fts(doc_id, original_name, content_text)
+          VALUES (new.id, new.original_name, COALESCE(new.content_text, ''));
+        END
+      `);
+
+      // Update trigger
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS documents_fts_update AFTER UPDATE ON documents BEGIN
+          UPDATE documents_fts SET
+            doc_id = new.id,
+            original_name = new.original_name,
+            content_text = COALESCE(new.content_text, '')
+          WHERE doc_id = old.id;
+        END
+      `);
+
+      // Delete trigger
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON documents BEGIN
+          DELETE FROM documents_fts WHERE doc_id = old.id;
+        END
+      `);
+
+      console.log('FTS5 table and triggers created successfully');
+    } catch (ftsError) {
+      // FTS5 not available or error creating it
+      console.warn('FTS5 not available, will use LIKE fallback:', ftsError.message);
+    }
 
     console.log('Database schema initialized successfully');
   } catch (error) {
