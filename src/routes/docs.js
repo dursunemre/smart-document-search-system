@@ -38,6 +38,7 @@ router.get('/search', controller.searchDocuments);
 router.get('/:id', controller.getDocument);
 router.get('/:id/download', controller.downloadDocument);
 router.post('/:id/summary', controller.generateSummary);
+router.delete('/:id', controller.deleteDocument);
 
 module.exports = router;
 

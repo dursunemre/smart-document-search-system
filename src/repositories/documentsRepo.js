@@ -24,8 +24,8 @@ function createDocument(doc) {
   const stmt = db.prepare(`
     INSERT INTO documents (
       id, original_name, stored_name, stored_path, 
-      mime_type, size, sha256, created_at, content_text
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      mime_type, size, sha256, created_at, content_text, content_blob
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   try {
@@ -38,7 +38,8 @@ function createDocument(doc) {
       doc.size,
       doc.sha256,
       createdAt,
-      doc.contentText || null
+      doc.contentText || null,
+      doc.contentBlob || null
     );
 
     // FTS5 triggers should handle the sync automatically, but we can also manually insert
@@ -129,6 +130,40 @@ function listDocuments({ limit = 50, offset = 0 } = {}) {
   }));
 }
 
+/**
+ * Get document file info (including optional BLOB) by ID
+ * Used for download endpoint.
+ * @param {string} id
+ * @returns {{id:string, originalName:string, storedName:string, storedPath:string, mimeType:string, contentBlob:Buffer|null}|null}
+ */
+function getDocumentFileById(id) {
+  const stmt = db.prepare(`
+    SELECT id, original_name, stored_name, stored_path, mime_type, content_blob
+    FROM documents
+    WHERE id = ?
+  `);
+  const row = stmt.get(id);
+  if (!row) return null;
+  return {
+    id: row.id,
+    originalName: row.original_name,
+    storedName: row.stored_name,
+    storedPath: row.stored_path,
+    mimeType: row.mime_type,
+    contentBlob: row.content_blob || null
+  };
+}
+
+/**
+ * Delete a document row by ID
+ * @param {string} id
+ * @returns {number} number of deleted rows
+ */
+function deleteDocumentById(id) {
+  const stmt = db.prepare(`DELETE FROM documents WHERE id = ?`);
+  const info = stmt.run(id);
+  return info.changes || 0;
+}
 /**
  * Search documents by keyword using FTS5 or LIKE fallback
  * @param {string} q - Search query
@@ -347,6 +382,8 @@ function updateSummary(docId, { summary, model, createdAt }) {
 module.exports = {
   createDocument,
   getDocumentById,
+  getDocumentFileById,
+  deleteDocumentById,
   listDocuments,
   searchDocumentsByKeyword,
   getDocumentBySha256,

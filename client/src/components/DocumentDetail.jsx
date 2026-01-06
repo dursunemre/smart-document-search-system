@@ -21,9 +21,14 @@ export default function DocumentDetail({ docId, onClose }) {
     try {
       const data = await getJSON(`/api/docs/${docId}`);
       setDoc(data);
-      // Summary is not persisted in DB; always start empty
-      setSummary(null);
-      setSummaryMeta(null);
+      // If a previously generated summary exists, show it on open
+      if (data.summary) {
+        setSummary(data.summary);
+        setSummaryMeta({ model: data.summaryModel, createdAt: data.summaryCreatedAt });
+      } else {
+        setSummary(null);
+        setSummaryMeta(null);
+      }
     } catch (err) {
       setError(err?.message || 'Doküman yüklenemedi');
     } finally {

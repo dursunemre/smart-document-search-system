@@ -1,10 +1,36 @@
 const path = require('path');
 const fs = require('fs');
+const db = require('../db');
 const hashFile = require('../utils/hashFile');
 const documentsRepo = require('../repositories/documentsRepo');
+const summariesRepo = require('../repositories/summariesRepo');
 const textExtractor = require('../services/textExtractor');
 const { generateSummary } = require('../services/summaryService');
 const AppError = require('../errors/AppError');
+
+function resolveStoredFilePath({ storedPath, storedName }) {
+  const candidates = [];
+  if (storedPath) {
+    candidates.push(path.normalize(storedPath));
+    if (!path.isAbsolute(storedPath)) {
+      candidates.push(path.resolve(process.cwd(), storedPath));
+    }
+  }
+
+  const uploadsDirs = [
+    process.env.UPLOADS_DIR,
+    path.join(process.cwd(), 'uploads'),
+    path.join(process.cwd(), 'uploads-test')
+  ].filter(Boolean);
+
+  if (storedName) {
+    for (const dir of uploadsDirs) {
+      candidates.push(path.join(dir, storedName));
+    }
+  }
+
+  return candidates.find((p) => p && fs.existsSync(p)) || null;
+}
 
 /**
  * Upload a document
@@ -51,6 +77,17 @@ exports.uploadDocument = async (req, res, next) => {
       throw err;
     }
 
+    // Read original file bytes to store in DB (so download works without local uploads folder)
+    let contentBlob = null;
+    try {
+      contentBlob = await fs.promises.readFile(storedPath);
+    } catch (cause) {
+      // If we can't read the uploaded file, treat as unprocessable and remove it
+      try { fs.unlinkSync(storedPath); } catch (_) {}
+      const e = new AppError({ statusCode: 422, code: 'UNPROCESSABLE', message: 'File could not be stored', cause });
+      throw e;
+    }
+
     // Create document record in database
     const doc = documentsRepo.createDocument({
       originalName: originalname,
@@ -59,7 +96,8 @@ exports.uploadDocument = async (req, res, next) => {
       mimeType: mimetype,
       size: size,
       sha256: sha256,
-      contentText: extracted ? extracted.text : null
+      contentText: extracted ? extracted.text : null,
+      contentBlob
     });
 
     const preview = extracted && extracted.text ? extracted.text.slice(0, 200) : '';
@@ -115,6 +153,18 @@ exports.getDocument = (req, res, next) => {
       error.statusCode = 404;
       error.code = 'NOT_FOUND';
       return next(error);
+    }
+
+    // Attach latest generated summary (if exists) from history table
+    try {
+      const latest = summariesRepo.getLatestSummaryByDocId(document.id);
+      if (latest && latest.summary) {
+        document.summary = latest.summary;
+        document.summaryModel = latest.model || null;
+        document.summaryCreatedAt = latest.createdAt || null;
+      }
+    } catch (_) {
+      // Non-fatal: return document without summary enrichment
     }
 
     res.json(document);
@@ -178,7 +228,7 @@ exports.downloadDocument = (req, res, next) => {
     const { id } = req.params;
 
     // Get document from database
-    const document = documentsRepo.getDocumentById(id);
+    const document = documentsRepo.getDocumentFileById(id);
 
     if (!document) {
       const error = new Error('File not found');
@@ -187,8 +237,18 @@ exports.downloadDocument = (req, res, next) => {
       return next(error);
     }
 
-    // Check if file exists on disk
-    if (!fs.existsSync(document.storedPath)) {
+    // Resolve stored path robustly (support moved workspaces / env changes)
+    const existingPath = resolveStoredFilePath({ storedPath: document.storedPath, storedName: document.storedName });
+
+    // If file is not on disk, fall back to DB BLOB
+    if (!existingPath) {
+      if (document.contentBlob && Buffer.isBuffer(document.contentBlob)) {
+        const safeName = document.originalName || 'download';
+        res.setHeader('Content-Type', document.mimeType || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeName)}"`);
+        return res.status(200).send(document.contentBlob);
+      }
+
       const error = new Error('File not found on disk');
       error.statusCode = 404;
       error.code = 'NOT_FOUND';
@@ -196,12 +256,73 @@ exports.downloadDocument = (req, res, next) => {
     }
 
     // Download with original filename
-    res.download(document.storedPath, document.originalName);
+    res.download(existingPath, document.originalName);
   } catch (error) {
     const dbError = new Error('Database error');
     dbError.statusCode = 500;
     dbError.code = 'DB_ERROR';
     return next(dbError);
+  }
+};
+
+/**
+ * Delete a document by ID (and all related data)
+ * DELETE /api/docs/:id
+ */
+exports.deleteDocument = (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const document = documentsRepo.getDocumentFileById(id);
+    if (!document) {
+      const error = new Error('Document not found');
+      error.statusCode = 404;
+      error.code = 'NOT_FOUND';
+      return next(error);
+    }
+
+    // Best-effort remove file from disk (uploads)
+    try {
+      const existingPath = resolveStoredFilePath({ storedPath: document.storedPath, storedName: document.storedName });
+      if (existingPath) {
+        try { fs.unlinkSync(existingPath); } catch (_) {}
+      }
+    } catch (_) {}
+
+    // Delete DB records in a transaction
+    const tx = db.transaction(() => {
+      summariesRepo.deleteSummariesByDocId(document.id);
+      // If FTS triggers are missing, also try delete from documents_fts (non-fatal if table doesn't exist)
+      try {
+        db.prepare('DELETE FROM documents_fts WHERE doc_id = ?').run(document.id);
+      } catch (_) {}
+      const deleted = documentsRepo.deleteDocumentById(document.id);
+      if (!deleted) {
+        const e = new Error('Document not found');
+        e.statusCode = 404;
+        e.code = 'NOT_FOUND';
+        throw e;
+      }
+    });
+
+    try {
+      tx();
+    } catch (err) {
+      if (err && err.statusCode && err.code) return next(err);
+      const dbError = new Error('Database error');
+      dbError.statusCode = 500;
+      dbError.code = 'DB_ERROR';
+      dbError.cause = err;
+      return next(dbError);
+    }
+
+    return res.status(200).json({ ok: true, docId: document.id });
+  } catch (error) {
+    if (error.statusCode && error.code) return next(error);
+    const internalError = new Error('Internal server error');
+    internalError.statusCode = 500;
+    internalError.code = 'INTERNAL_ERROR';
+    return next(internalError);
   }
 };
 
@@ -325,7 +446,20 @@ exports.generateSummary = async (req, res, next) => {
 
     const createdAt = new Date().toISOString();
 
-    // Response (do NOT persist summary in DB)
+    // Persist as history (append-only; do not overwrite)
+    try {
+      summariesRepo.createSummary({
+        docId: document.id,
+        summary: summaryResult.summary,
+        model: summaryResult.model,
+        createdAt
+      });
+    } catch (dbErr) {
+      // If persistence fails, still return generated summary (best-effort)
+      console.warn('Failed to persist summary (non-fatal):', dbErr.message || dbErr);
+    }
+
+    // Response (keep current UX; summary shown immediately)
     return res.status(200).json({
       docId: document.id,
       docName: document.originalName,

@@ -21,6 +21,7 @@ function initSchema() {
         sha256 TEXT NOT NULL,
         created_at TEXT NOT NULL,
         content_text TEXT,
+        content_blob BLOB,
         summary TEXT,
         summary_created_at TEXT,
         summary_model TEXT,
@@ -31,6 +32,17 @@ function initSchema() {
         summary_long_created_at TEXT,
         summary_long_model TEXT,
         summary_long_level TEXT
+      )
+    `);
+
+    // Store generated summaries as history (do not overwrite)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS document_summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        doc_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        model TEXT,
+        created_at TEXT NOT NULL
       )
     `);
 
@@ -52,6 +64,7 @@ function initSchema() {
     // NOTE: SQLite doesn't support IF NOT EXISTS for ADD COLUMN.
     // We use PRAGMA table_info() checks before ALTER TABLE.
     try { ensureColumn('documents', 'content_text', 'TEXT'); } catch (_) {}
+    try { ensureColumn('documents', 'content_blob', 'BLOB'); } catch (_) {}
 
     // Add summary columns if they don't exist
     const summaryColumns = [
@@ -82,6 +95,11 @@ function initSchema() {
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_documents_created_at 
       ON documents(created_at)
+    `);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_document_summaries_doc_id_created_at
+      ON document_summaries(doc_id, created_at)
     `);
 
     db.exec(`
