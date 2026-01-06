@@ -12,7 +12,7 @@ const { buildBasedOnDocs } = require('../utils/citations');
  */
 exports.answerQuestion = async (req, res, next) => {
   try {
-    const { question, topK = 5, docLimit = 5 } = req.body;
+    const { question, topK = 5, docLimit = 5, docId } = req.body;
 
     // Validation
     if (!question || !question.trim()) {
@@ -25,12 +25,27 @@ exports.answerQuestion = async (req, res, next) => {
     // Validate and sanitize parameters
     const safeTopK = Math.min(Math.max(parseInt(topK) || 5, 1), 8);
     const safeDocLimit = Math.min(Math.max(parseInt(docLimit) || 5, 1), 10);
+    
+    // If docId is provided, validate it exists
+    let targetDocId = null;
+    if (docId && docId.trim()) {
+      const documentsRepo = require('../repositories/documentsRepo');
+      const doc = documentsRepo.getDocumentById(docId.trim());
+      if (!doc) {
+        const error = new Error('Document not found');
+        error.statusCode = 404;
+        error.code = 'NOT_FOUND';
+        return next(error);
+      }
+      targetDocId = docId.trim();
+    }
 
     // Retrieve relevant chunks
     const chunks = await retrievalService.retrieveChunks(
       question.trim(),
       safeDocLimit,
-      safeTopK
+      safeTopK,
+      targetDocId
     );
 
     // If no chunks found, return early

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { getJSON } from '../api.js';
 
-export default function SearchPanel() {
+export default function SearchPanel({ documents = [] }) {
   const [q, setQ] = useState('');
+  const [selectedDocId, setSelectedDocId] = useState('');
   const [mode, setMode] = useState('');
   const [limit] = useState(20);
   const [offset, setOffset] = useState(0);
@@ -20,9 +21,11 @@ export default function SearchPanel() {
     }
     setLoading(true);
     try {
-      const res = await getJSON(
-        `/api/docs/search?q=${encodeURIComponent(trimmed)}&limit=${limit}&offset=${nextOffset}`
-      );
+      let url = `/api/docs/search?q=${encodeURIComponent(trimmed)}&limit=${limit}&offset=${nextOffset}`;
+      if (selectedDocId) {
+        url += `&docId=${encodeURIComponent(selectedDocId)}`;
+      }
+      const res = await getJSON(url);
       setData(res);
       setMode(res?.mode || '');
       setOffset(nextOffset);
@@ -40,6 +43,7 @@ export default function SearchPanel() {
 
   function handleClear() {
     setQ('');
+    setSelectedDocId('');
     setMode('');
     setOffset(0);
     setError('');
@@ -61,8 +65,27 @@ export default function SearchPanel() {
       <div className="cardHeader">
         <h2>Search</h2>
         <p className="muted">
-          mode: <span className="mono">{mode || '-'}</span>
+          {selectedDocId ? 'Seçili doküman içinde ara' : 'Tüm dokümanlarda ara'} • mode: <span className="mono">{mode || '-'}</span>
         </p>
+      </div>
+
+      <div style={{ marginBottom: '14px' }}>
+        <select
+          value={selectedDocId}
+          onChange={(e) => {
+            setSelectedDocId(e.target.value);
+            setOffset(0);
+            setData({ total: 0, results: [], query: '', mode: '' });
+          }}
+          disabled={loading}
+        >
+          <option value="">Tüm Dokümanlar</option>
+          {documents.map((doc) => (
+            <option key={doc.id} value={doc.id}>
+              {doc.originalName || doc.id}
+            </option>
+          ))}
+        </select>
       </div>
 
       <form className="row" onSubmit={handleSubmit}>

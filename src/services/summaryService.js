@@ -34,7 +34,7 @@ function initializeGemini() {
 async function generateShortSummary({ docId, text, docName }) {
   try {
     const api = initializeGemini();
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 
     // Limit text length to reduce LLM cost (first 12000 characters)
     const truncatedText = text.length > 12000 ? text.slice(0, 12000) + '...' : text;
@@ -112,7 +112,7 @@ Lütfen aşağıdaki JSON formatında özet döndür:
 async function generateLongSummary({ docId, docName, text, level, format }) {
   try {
     const api = initializeGemini();
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 
     const maxChars = 20000;
     const isTruncated = text.length > maxChars;

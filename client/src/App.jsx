@@ -3,6 +3,7 @@ import { getJSON } from './api.js';
 import UploadCard from './components/UploadCard.jsx';
 import DocumentsTable from './components/DocumentsTable.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
+import QAPanel from './components/QAPanel.jsx';
 
 function normalizeListResponse(res, { limit, offset }) {
   // Expected: { total, limit, offset, results }
@@ -68,7 +69,9 @@ export default function App() {
           onNext={() => fetchDocs(offset + limit)}
         />
 
-        <SearchPanel />
+        <SearchPanel documents={data.results || []} />
+        
+        <QAPanel documents={data.results || []} />
       </main>
 
       <footer className="footer muted">

@@ -21,7 +21,7 @@ function initializeGemini() {
     genAI = new GoogleGenerativeAI(apiKey);
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+  const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
   
   if (!model) {
     model = genAI.getGenerativeModel({ 

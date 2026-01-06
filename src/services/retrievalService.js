@@ -60,43 +60,56 @@ function scoreChunk(chunkText, questionKeywords) {
  * @param {string} question - User question
  * @param {number} docLimit - Maximum number of documents to consider
  * @param {number} topK - Maximum number of chunks to return
+ * @param {string} [docId] - Optional document ID to filter by
  * @returns {Promise<Array<Object>>} - Scored chunks with metadata
  */
-async function retrieveChunks(question, docLimit = 5, topK = 5) {
+async function retrieveChunks(question, docLimit = 5, topK = 5, docId = null) {
   // Extract keywords from question
   const questionKeywords = extractKeywords(question);
 
-  // Try to get documents via search first
+  // If docId is provided, use only that document
   let candidateDocs = [];
   
-  if (questionKeywords.length > 0) {
-    try {
-      // Use first few keywords for search
-      const searchQuery = questionKeywords.slice(0, 3).join(' ');
-      const searchResult = documentsRepo.searchDocumentsByKeyword(searchQuery, {
-        limit: docLimit,
-        offset: 0
-      });
-      
-      if (searchResult.results && searchResult.results.length > 0) {
-        // Get full document objects
-        candidateDocs = searchResult.results.map(result => 
-          documentsRepo.getDocumentById(result.id)
-        ).filter(doc => doc !== null);
-      }
-    } catch (error) {
-      console.warn('Search failed, falling back to recent documents:', error.message);
+  if (docId) {
+    const doc = documentsRepo.getDocumentById(docId);
+    if (doc) {
+      candidateDocs = [doc];
+    } else {
+      // Document not found, return empty chunks
+      return [];
     }
-  }
+  } else {
+    // Try to get documents via search first
+    if (questionKeywords.length > 0) {
+      try {
+        // Use first few keywords for search
+        const searchQuery = questionKeywords.slice(0, 3).join(' ');
+        const searchResult = documentsRepo.searchDocumentsByKeyword(searchQuery, {
+          limit: docLimit,
+          offset: 0,
+          docId: null // Search all documents
+        });
+        
+        if (searchResult.results && searchResult.results.length > 0) {
+          // Get full document objects
+          candidateDocs = searchResult.results.map(result => 
+            documentsRepo.getDocumentById(result.id)
+          ).filter(doc => doc !== null);
+        }
+      } catch (error) {
+        console.warn('Search failed, falling back to recent documents:', error.message);
+      }
+    }
 
-  // If no documents from search, get recent documents
-  if (candidateDocs.length === 0) {
-    const recentDocs = documentsRepo.listDocuments({ limit: docLimit, offset: 0 });
-    candidateDocs = recentDocs;
-  }
+    // If no documents from search, get recent documents
+    if (candidateDocs.length === 0) {
+      const recentDocs = documentsRepo.listDocuments({ limit: docLimit, offset: 0 });
+      candidateDocs = recentDocs.results || recentDocs;
+    }
 
-  // Limit to docLimit
-  candidateDocs = candidateDocs.slice(0, docLimit);
+    // Limit to docLimit
+    candidateDocs = candidateDocs.slice(0, docLimit);
+  }
 
   // Get text for each document and chunk
   const allChunks = [];

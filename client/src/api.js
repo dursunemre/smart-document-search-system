@@ -29,4 +29,34 @@ export async function postFormData(url, formData) {
   return await res.json();
 }
 
+export async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const msg = await readErrorMessage(res);
+    throw new Error(msg || `Request failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+export async function downloadFile(url, filename) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const msg = await readErrorMessage(res);
+    throw new Error(msg || `Download failed (${res.status})`);
+  }
+  const blob = await res.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = filename || 'download';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
 

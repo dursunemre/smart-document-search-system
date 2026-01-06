@@ -132,6 +132,7 @@ exports.getDocument = (req, res, next) => {
 exports.searchDocuments = (req, res, next) => {
   try {
     const q = req.query.q || '';
+    const docId = req.query.docId || null;
 
     if (!q || !q.trim()) {
       const error = new Error('Missing query');
@@ -143,7 +144,18 @@ exports.searchDocuments = (req, res, next) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = parseInt(req.query.offset) || 0;
 
-    const result = documentsRepo.searchDocumentsByKeyword(q.trim(), { limit, offset });
+    // If docId is provided, validate it exists
+    if (docId && docId.trim()) {
+      const doc = documentsRepo.getDocumentById(docId.trim());
+      if (!doc) {
+        const error = new Error('Document not found');
+        error.statusCode = 404;
+        error.code = 'NOT_FOUND';
+        return next(error);
+      }
+    }
+
+    const result = documentsRepo.searchDocumentsByKeyword(q.trim(), { limit, offset, docId: docId ? docId.trim() : null });
     res.json(result);
   } catch (error) {
     // If it's already a formatted error, pass it through
@@ -346,7 +358,7 @@ exports.generateLongSummary = async (req, res, next) => {
         summaryLong: document.summaryLong,
         level,
         format,
-        model: document.summaryLongModel || (process.env.GEMINI_MODEL || 'gemini-2.5-flash'),
+        model: document.summaryLongModel || (process.env.GEMINI_MODEL || 'gemini-1.5-flash'),
         createdAt: document.summaryLongCreatedAt || null
       });
     }

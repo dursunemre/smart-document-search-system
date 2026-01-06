@@ -139,9 +139,10 @@ function listDocuments({ limit = 50, offset = 0 } = {}) {
  * @param {Object} options - Query options
  * @param {number} options.limit - Maximum number of results
  * @param {number} options.offset - Number of results to skip
+ * @param {string} [options.docId] - Optional document ID to filter by
  * @returns {Object} - Search result with mode, total, and results
  */
-function searchDocumentsByKeyword(q, { limit = 50, offset = 0 } = {}) {
+function searchDocumentsByKeyword(q, { limit = 50, offset = 0, docId = null } = {}) {
   // Validate and sanitize limit/offset
   const safeLimit = Math.min(Math.max(parseInt(limit) || 50, 1), 50);
   const safeOffset = Math.max(parseInt(offset) || 0, 0);
@@ -179,6 +180,7 @@ function searchDocumentsByKeyword(q, { limit = 50, offset = 0 } = {}) {
 
     // FTS5 search query
     // Note: snippet() column indices: 0=doc_id, 1=original_name, 2=content_text
+    const docIdFilter = docId ? 'AND d.id = ?' : '';
     const ftsStmt = db.prepare(`
       SELECT 
         d.id,
@@ -195,20 +197,25 @@ function searchDocumentsByKeyword(q, { limit = 50, offset = 0 } = {}) {
         snippet(documents_fts, 2, '<mark>', '</mark>', '...', 32) as highlight_content_text
       FROM documents_fts
       JOIN documents d ON d.id = documents_fts.doc_id
-      WHERE documents_fts MATCH ?
+      WHERE documents_fts MATCH ? ${docIdFilter}
       ORDER BY score ASC, d.created_at DESC
       LIMIT ? OFFSET ?
     `);
 
-    const rows = ftsStmt.all(ftsQuery, safeLimit, safeOffset);
+    const queryParams = docId 
+      ? [ftsQuery, docId, safeLimit, safeOffset]
+      : [ftsQuery, safeLimit, safeOffset];
+    const rows = ftsStmt.all(...queryParams);
 
     // Get total count
     const countStmt = db.prepare(`
       SELECT COUNT(*) as total
       FROM documents_fts
-      WHERE documents_fts MATCH ?
+      JOIN documents d ON d.id = documents_fts.doc_id
+      WHERE documents_fts MATCH ? ${docIdFilter}
     `);
-    const countResult = countStmt.get(ftsQuery);
+    const countParams = docId ? [ftsQuery, docId] : [ftsQuery];
+    const countResult = countStmt.get(...countParams);
     const total = countResult ? countResult.total : 0;
 
     const results = rows.map(row => {
@@ -240,22 +247,27 @@ function searchDocumentsByKeyword(q, { limit = 50, offset = 0 } = {}) {
     console.warn('FTS5 search failed, using LIKE fallback:', ftsError.message);
 
     const searchTerm = `%${q}%`;
+    const docIdFilter = docId ? 'AND id = ?' : '';
     const likeStmt = db.prepare(`
       SELECT * FROM documents 
-      WHERE original_name LIKE ? OR stored_path LIKE ? OR COALESCE(content_text, '') LIKE ?
+      WHERE (original_name LIKE ? OR stored_path LIKE ? OR COALESCE(content_text, '') LIKE ?) ${docIdFilter}
       ORDER BY created_at DESC 
       LIMIT ? OFFSET ?
     `);
 
-    const rows = likeStmt.all(searchTerm, searchTerm, searchTerm, safeLimit, safeOffset);
+    const likeParams = docId 
+      ? [searchTerm, searchTerm, searchTerm, docId, safeLimit, safeOffset]
+      : [searchTerm, searchTerm, searchTerm, safeLimit, safeOffset];
+    const rows = likeStmt.all(...likeParams);
 
     // Get total count for LIKE search
     const countStmt = db.prepare(`
       SELECT COUNT(*) as total
       FROM documents 
-      WHERE original_name LIKE ? OR stored_path LIKE ? OR COALESCE(content_text, '') LIKE ?
+      WHERE (original_name LIKE ? OR stored_path LIKE ? OR COALESCE(content_text, '') LIKE ?) ${docIdFilter}
     `);
-    const countResult = countStmt.get(searchTerm, searchTerm, searchTerm);
+    const countParams = docId ? [searchTerm, searchTerm, searchTerm, docId] : [searchTerm, searchTerm, searchTerm];
+    const countResult = countStmt.get(...countParams);
     const total = countResult ? countResult.total : 0;
 
     const results = rows.map(row => ({
