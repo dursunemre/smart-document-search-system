@@ -8,8 +8,7 @@ export default function DocumentDetail({ docId, onClose }) {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState('');
   const [summary, setSummary] = useState(null);
-  const [summaryType, setSummaryType] = useState(null); // 'short' or 'long'
-  const [summaryMeta, setSummaryMeta] = useState(null); // { level, format, model }
+  const [summaryMeta, setSummaryMeta] = useState(null); // { model, createdAt }
 
   useEffect(() => {
     if (!docId) return;
@@ -22,23 +21,9 @@ export default function DocumentDetail({ docId, onClose }) {
     try {
       const data = await getJSON(`/api/docs/${docId}`);
       setDoc(data);
-      // Load existing summaries if available
-      if (data.summaryShort) {
-        setSummary(data.summaryShort);
-        setSummaryType('short');
-        setSummaryMeta({ model: data.summaryShortModel });
-      } else if (data.summaryLong) {
-        setSummary(data.summaryLong);
-        setSummaryType('long');
-        // Parse level:format from summaryLongLevel
-        const levelField = data.summaryLongLevel || '';
-        const [level, format] = levelField.split(':');
-        setSummaryMeta({ level: level || 'medium', format: format || 'structured', model: data.summaryLongModel });
-      } else {
-        setSummary(null);
-        setSummaryType(null);
-        setSummaryMeta(null);
-      }
+      // Summary is not persisted in DB; always start empty
+      setSummary(null);
+      setSummaryMeta(null);
     } catch (err) {
       setError(err?.message || 'Doküman yüklenemedi');
     } finally {
@@ -46,34 +31,16 @@ export default function DocumentDetail({ docId, onClose }) {
     }
   }
 
-  async function generateShortSummary() {
+  async function generateSummary() {
     if (!docId) return;
     setSummaryLoading(true);
     setSummaryError('');
+    setSummary(null);
+    setSummaryMeta(null);
     try {
-      const result = await postJSON(`/api/docs/${docId}/summary/short`, {});
-      setSummary(result.summaryShort);
-      setSummaryType('short');
-      setSummaryMeta({ model: result.model });
-    } catch (err) {
-      setSummaryError(err?.message || 'Özet oluşturulamadı');
-    } finally {
-      setSummaryLoading(false);
-    }
-  }
-
-  async function generateLongSummary(level = 'medium', format = 'structured') {
-    if (!docId) return;
-    setSummaryLoading(true);
-    setSummaryError('');
-    try {
-      const result = await postJSON(`/api/docs/${docId}/summary/long`, {
-        level,
-        format
-      });
-      setSummary(result.summaryLong);
-      setSummaryType('long');
-      setSummaryMeta({ level: result.level, format: result.format, model: result.model });
+      const result = await postJSON(`/api/docs/${docId}/summary`, {});
+      setSummary(result.summary);
+      setSummaryMeta({ model: result.model, createdAt: result.createdAt });
     } catch (err) {
       setSummaryError(err?.message || 'Özet oluşturulamadı');
     } finally {
@@ -141,35 +108,30 @@ export default function DocumentDetail({ docId, onClose }) {
                 <div className="row">
                   <button
                     className="btn"
-                    onClick={generateShortSummary}
+                    onClick={generateSummary}
                     disabled={summaryLoading}
                   >
-                    {summaryLoading ? 'Oluşturuluyor…' : 'Kısa Özet'}
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() => generateLongSummary('medium', 'structured')}
-                    disabled={summaryLoading}
-                  >
-                    {summaryLoading ? 'Oluşturuluyor…' : 'Uzun Özet'}
+                    {summaryLoading ? 'Oluşturuluyor…' : 'Özet Oluştur'}
                   </button>
                 </div>
               </div>
 
               {summaryError ? <div className="errorBox">{summaryError}</div> : null}
 
-              {summary ? (
+              {summaryLoading ? (
+                <div className="muted">Özet oluşturuluyor…</div>
+              ) : summary ? (
                 <div className="summaryBox">
                   <div className="summaryContent">{summary}</div>
                   {summaryMeta && (
                     <div className="muted" style={{ marginTop: '8px', fontSize: '12px' }}>
-                      Tip: {summaryType === 'short' ? 'Kısa Özet' : `Uzun Özet (${summaryMeta.level || 'medium'}, ${summaryMeta.format || 'structured'})`}
-                      {summaryMeta.model && ` • Model: ${summaryMeta.model}`}
+                      {summaryMeta.createdAt ? `Oluşturulma: ${summaryMeta.createdAt}` : null}
+                      {summaryMeta.model ? `${summaryMeta.createdAt ? ' • ' : ''}Model: ${summaryMeta.model}` : null}
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="muted">Henüz özet oluşturulmadı. Yukarıdaki butonları kullanarak özet oluşturabilirsiniz.</div>
+                <div className="muted">Henüz özet oluşturulmadı. Yukarıdaki butona basarak özet oluşturabilirsiniz.</div>
               )}
             </div>
           </>

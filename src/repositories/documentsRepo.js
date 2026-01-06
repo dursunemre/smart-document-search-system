@@ -94,13 +94,9 @@ function getDocumentById(id) {
     sha256: row.sha256,
     createdAt: row.created_at,
     contentText: row.content_text || null,
-    summaryShort: row.summary_short || null,
-    summaryShortCreatedAt: row.summary_short_created_at || null,
-    summaryShortModel: row.summary_short_model || null,
-    summaryLong: row.summary_long || null,
-    summaryLongCreatedAt: row.summary_long_created_at || null,
-    summaryLongModel: row.summary_long_model || null,
-    summaryLongLevel: row.summary_long_level || null
+    summary: row.summary || null,
+    summaryCreatedAt: row.summary_created_at || null,
+    summaryModel: row.summary_model || null
   };
 }
 
@@ -314,18 +310,14 @@ function getDocumentBySha256(sha256) {
     sha256: row.sha256,
     createdAt: row.created_at,
     contentText: row.content_text || null,
-    summaryShort: row.summary_short || null,
-    summaryShortCreatedAt: row.summary_short_created_at || null,
-    summaryShortModel: row.summary_short_model || null,
-    summaryLong: row.summary_long || null,
-    summaryLongCreatedAt: row.summary_long_created_at || null,
-    summaryLongModel: row.summary_long_model || null,
-    summaryLongLevel: row.summary_long_level || null
+    summary: row.summary || null,
+    summaryCreatedAt: row.summary_created_at || null,
+    summaryModel: row.summary_model || null
   };
 }
 
 /**
- * Update short summary for a document
+ * Update summary for a document
  * @param {string} docId - Document ID
  * @param {Object} summaryData - Summary data
  * @param {string} summaryData.summary - Summary text
@@ -333,14 +325,14 @@ function getDocumentBySha256(sha256) {
  * @param {string} [summaryData.createdAt] - Creation timestamp (ISO), defaults to now
  * @returns {Object} - Updated document record
  */
-function updateShortSummary(docId, { summary, model, createdAt }) {
+function updateSummary(docId, { summary, model, createdAt }) {
   const summaryCreatedAt = createdAt || new Date().toISOString();
 
   const stmt = db.prepare(`
     UPDATE documents 
-    SET summary_short = ?,
-        summary_short_created_at = ?,
-        summary_short_model = ?
+    SET summary = ?,
+        summary_created_at = ?,
+        summary_model = ?
     WHERE id = ?
   `);
 
@@ -352,41 +344,12 @@ function updateShortSummary(docId, { summary, model, createdAt }) {
   }
 }
 
-/**
- * Update long summary for a document
- * @param {string} docId - Document ID
- * @param {Object} summaryData - Summary data
- * @param {string} summaryData.summary - Summary text
- * @param {string} summaryData.model - Model used to generate summary
- * @param {string} summaryData.level - Requested level (medium|long)
- * @param {string} summaryData.format - Requested format (structured|bullets)
- * @param {string} [summaryData.createdAt] - Creation timestamp (ISO), defaults to now
- * @returns {Object} - Updated document record
- */
-function updateLongSummary(docId, { summary, model, createdAt, level, format }) {
-  const summaryCreatedAt = createdAt || new Date().toISOString();
-  const levelField = `${level}:${format}`;
-
-  const stmt = db.prepare(`
-    UPDATE documents
-    SET summary_long = ?,
-        summary_long_created_at = ?,
-        summary_long_model = ?,
-        summary_long_level = ?
-    WHERE id = ?
-  `);
-
-  stmt.run(summary, summaryCreatedAt, model, levelField, docId);
-  return getDocumentById(docId);
-}
-
 module.exports = {
   createDocument,
   getDocumentById,
   listDocuments,
   searchDocumentsByKeyword,
   getDocumentBySha256,
-  updateShortSummary,
-  updateLongSummary
+  updateSummary
 };
 

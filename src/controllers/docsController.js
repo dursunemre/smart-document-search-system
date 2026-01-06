@@ -3,7 +3,7 @@ const fs = require('fs');
 const hashFile = require('../utils/hashFile');
 const documentsRepo = require('../repositories/documentsRepo');
 const textExtractor = require('../services/textExtractor');
-const { generateShortSummary, generateLongSummary } = require('../services/summaryService');
+const { generateSummary } = require('../services/summaryService');
 const AppError = require('../errors/AppError');
 
 /**
@@ -206,9 +206,10 @@ exports.downloadDocument = (req, res, next) => {
 };
 
 /**
- * Generate short summary for a document
+ * Generate summary for a document
+ * POST /api/docs/:id/summary
  */
-exports.generateShortSummary = async (req, res, next) => {
+exports.generateSummary = async (req, res, next) => {
   try {
     const { id } = req.params;
 
@@ -256,7 +257,7 @@ exports.generateShortSummary = async (req, res, next) => {
     // Generate summary using Gemini
     let summaryResult;
     try {
-      summaryResult = await generateShortSummary({
+      summaryResult = await generateSummary({
         docId: document.id,
         text: text,
         docName: document.originalName
@@ -270,6 +271,50 @@ exports.generateShortSummary = async (req, res, next) => {
         return next(apiError);
       }
 
+      const status = error && (error.status || error.statusCode);
+
+      // Model not available / not supported
+      if (status === 404) {
+        const modelError = new Error('Configured Gemini model is not available for this API key.');
+        modelError.statusCode = 500;
+        modelError.code = 'MODEL_NOT_AVAILABLE';
+        modelError.cause = error;
+        return next(modelError);
+      }
+
+      // Rate limit / quota exceeded
+      if (status === 429) {
+        // Try to surface retry-after if present in errorDetails/message
+        let retryAfterSec = null;
+        try {
+          const details = error.errorDetails;
+          if (Array.isArray(details)) {
+            for (const d of details) {
+              if (!d) continue;
+              const t = d['@type'] || d.type || '';
+              if (String(t).includes('RetryInfo') && d.retryDelay) {
+                const m = String(d.retryDelay).trim().match(/^(\d+(?:\.\d+)?)s$/i);
+                if (m) retryAfterSec = Math.max(0, Math.ceil(parseFloat(m[1])));
+              }
+            }
+          }
+          if (retryAfterSec == null && error.message) {
+            const m2 = String(error.message).match(/Please retry in\s+(\d+(?:\.\d+)?)s/i);
+            if (m2) retryAfterSec = Math.max(0, Math.ceil(parseFloat(m2[1])));
+          }
+        } catch (_) {}
+
+        if (retryAfterSec != null) {
+          res.set('Retry-After', String(retryAfterSec));
+        }
+
+        const rateError = new Error('LLM rate limit exceeded. Please retry shortly.');
+        rateError.statusCode = 429;
+        rateError.code = 'RATE_LIMIT';
+        rateError.cause = error;
+        return next(rateError);
+      }
+
       // Other Gemini errors
       const llmError = new Error('LLM error');
       llmError.statusCode = 502;
@@ -278,19 +323,15 @@ exports.generateShortSummary = async (req, res, next) => {
       return next(llmError);
     }
 
-    // Save summary to database
-    const updatedDoc = documentsRepo.updateShortSummary(document.id, {
-      summary: summaryResult.summary,
-      model: summaryResult.model
-    });
+    const createdAt = new Date().toISOString();
 
-    // Response
-    res.status(200).json({
-      docId: updatedDoc.id,
-      docName: updatedDoc.originalName,
-      summaryShort: updatedDoc.summaryShort,
-      model: updatedDoc.summaryShortModel,
-      createdAt: updatedDoc.summaryShortCreatedAt
+    // Response (do NOT persist summary in DB)
+    return res.status(200).json({
+      docId: document.id,
+      docName: document.originalName,
+      summary: summaryResult.summary,
+      model: summaryResult.model,
+      createdAt
     });
   } catch (error) {
     // If it's already a formatted error, pass it through
@@ -305,142 +346,3 @@ exports.generateShortSummary = async (req, res, next) => {
     return next(internalError);
   }
 };
-
-function parseLevelField(levelField) {
-  if (!levelField || typeof levelField !== 'string') return { level: null, format: null };
-  // stored as "level:format"
-  const [level, format] = levelField.split(':');
-  return { level: level || null, format: format || null };
-}
-
-/**
- * Generate long summary for a document (on-demand, cached)
- * POST /api/docs/:id/summary/long
- * body: { level?: "medium"|"long", format?: "structured"|"bullets" }
- */
-exports.generateLongSummary = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const level = (req.body && req.body.level) ? String(req.body.level) : 'medium';
-    const format = (req.body && req.body.format) ? String(req.body.format) : 'structured';
-
-    const allowedLevels = new Set(['medium', 'long']);
-    const allowedFormats = new Set(['structured', 'bullets']);
-
-    if (!allowedLevels.has(level) || !allowedFormats.has(format)) {
-      const error = new Error('Invalid level or format');
-      error.statusCode = 400;
-      error.code = 'BAD_REQUEST';
-      return next(error);
-    }
-
-    const document = documentsRepo.getDocumentById(id);
-    if (!document) {
-      const error = new Error('Document not found');
-      error.statusCode = 404;
-      error.code = 'NOT_FOUND';
-      return next(error);
-    }
-
-    // Cache behavior:
-    // If summary_long exists AND matches requested level/format, return as-is.
-    const cachedMeta = parseLevelField(document.summaryLongLevel);
-    if (
-      document.summaryLong &&
-      typeof document.summaryLong === 'string' &&
-      document.summaryLong.trim().length > 0 &&
-      cachedMeta.level === level &&
-      cachedMeta.format === format
-    ) {
-      return res.status(200).json({
-        docId: document.id,
-        docName: document.originalName,
-        summaryLong: document.summaryLong,
-        level,
-        format,
-        model: document.summaryLongModel || (process.env.GEMINI_MODEL || 'gemini-1.5-flash'),
-        createdAt: document.summaryLongCreatedAt || null
-      });
-    }
-
-    // Get text content (prefer DB)
-    let text = '';
-    if (document.contentText && document.contentText.trim().length > 0) {
-      text = document.contentText;
-    } else {
-      try {
-        const extracted = await textExtractor.extractTextFromFile({
-          path: document.storedPath,
-          mimeType: document.mimeType
-        });
-        text = extracted.text;
-      } catch (extractError) {
-        const error = new Error('Text extraction failed');
-        error.statusCode = 422;
-        error.code = 'EXTRACTION_FAILED';
-        error.cause = extractError;
-        return next(error);
-      }
-    }
-
-    if (!text || text.trim().length === 0) {
-      const error = new Error('Text extraction failed');
-      error.statusCode = 422;
-      error.code = 'EXTRACTION_FAILED';
-      return next(error);
-    }
-
-    // Generate summary via Gemini
-    let result;
-    try {
-      result = await generateLongSummary({
-        docId: document.id,
-        docName: document.originalName,
-        text,
-        level,
-        format
-      });
-    } catch (error) {
-      if (error.message.includes('GEMINI_API_KEY')) {
-        const apiError = new Error('GEMINI_API_KEY is not configured');
-        apiError.statusCode = 500;
-        apiError.code = 'CONFIG_ERROR';
-        return next(apiError);
-      }
-
-      const llmError = new Error('LLM error');
-      llmError.statusCode = 502;
-      llmError.code = 'LLM_ERROR';
-      llmError.cause = error;
-      return next(llmError);
-    }
-
-    const createdAt = new Date().toISOString();
-    const updatedDoc = documentsRepo.updateLongSummary(document.id, {
-      summary: result.summary,
-      model: result.model,
-      createdAt,
-      level,
-      format
-    });
-
-    return res.status(200).json({
-      docId: updatedDoc.id,
-      docName: updatedDoc.originalName,
-      summaryLong: updatedDoc.summaryLong,
-      level,
-      format,
-      model: updatedDoc.summaryLongModel,
-      createdAt: updatedDoc.summaryLongCreatedAt
-    });
-  } catch (error) {
-    if (error.statusCode && error.code) {
-      return next(error);
-    }
-    const internalError = new Error('Internal server error');
-    internalError.statusCode = 500;
-    internalError.code = 'INTERNAL_ERROR';
-    return next(internalError);
-  }
-};
-

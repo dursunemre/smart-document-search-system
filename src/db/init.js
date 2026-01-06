@@ -21,6 +21,9 @@ function initSchema() {
         sha256 TEXT NOT NULL,
         created_at TEXT NOT NULL,
         content_text TEXT,
+        summary TEXT,
+        summary_created_at TEXT,
+        summary_model TEXT,
         summary_short TEXT,
         summary_short_created_at TEXT,
         summary_short_model TEXT,
@@ -52,6 +55,9 @@ function initSchema() {
 
     // Add summary columns if they don't exist
     const summaryColumns = [
+      { name: 'summary', type: 'TEXT' },
+      { name: 'summary_created_at', type: 'TEXT' },
+      { name: 'summary_model', type: 'TEXT' },
       { name: 'summary_short', type: 'TEXT' },
       { name: 'summary_short_created_at', type: 'TEXT' },
       { name: 'summary_short_model', type: 'TEXT' },
