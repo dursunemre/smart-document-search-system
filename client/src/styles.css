@@ -132,11 +132,13 @@ h3 {
     grid-template-columns: 1fr 1fr;
     gap: 24px;
   }
-  .grid > :nth-child(2) {
+  /* Documents block should span full width on desktop */
+  .grid > :nth-child(1) {
     grid-column: span 2;
   }
-  .grid > :nth-child(3),
-  .grid > :nth-child(4) {
+  /* Remaining blocks are half width */
+  .grid > :nth-child(2),
+  .grid > :nth-child(3) {
     grid-column: span 1;
   }
 }
@@ -620,6 +622,43 @@ select:disabled {
   word-break: break-word;
   line-height: 1.8;
   font-size: 15px;
+}
+
+/* Document content + in-document find (Ctrl+F style) */
+.contentSection {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.findBar input[type="text"] {
+  min-width: 240px;
+}
+
+.contentBox {
+  margin-top: 12px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  max-height: 45vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.7;
+}
+
+.contentBox mark {
+  background: rgba(245, 158, 11, 0.35);
+  color: var(--text);
+  padding: 0 2px;
+  border-radius: 4px;
+}
+
+.contentBox mark.active {
+  background: rgba(245, 158, 11, 0.55);
+  outline: 2px solid rgba(245, 158, 11, 0.7);
 }
 
 /* Q&A Panel */

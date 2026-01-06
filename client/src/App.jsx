@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getJSON } from './api.js';
-import UploadCard from './components/UploadCard.jsx';
 import DocumentsTable from './components/DocumentsTable.jsx';
-import SearchPanel from './components/SearchPanel.jsx';
-import QAPanel from './components/QAPanel.jsx';
 
 function normalizeListResponse(res, { limit, offset }) {
   // Expected: { total, limit, offset, results }
@@ -56,8 +53,6 @@ export default function App() {
       </header>
 
       <main className="grid">
-        <UploadCard onUploaded={() => fetchDocs(0)} />
-
         <DocumentsTable
           loading={loading}
           error={error}
@@ -65,13 +60,10 @@ export default function App() {
           limit={limit}
           offset={offset}
           onRefresh={() => fetchDocs(offset)}
+          onUploadSuccess={() => fetchDocs(0)}
           onPrev={() => fetchDocs(Math.max(0, offset - limit))}
           onNext={() => fetchDocs(offset + limit)}
         />
-
-        <SearchPanel documents={data.results || []} />
-        
-        <QAPanel documents={data.results || []} />
       </main>
 
       <footer className="footer muted">

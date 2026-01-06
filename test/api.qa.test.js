@@ -64,8 +64,8 @@ describe('POST /api/qa', () => {
       .post('/api/qa')
       .send({
         question: 'What is this document about?',
-        topK: 5,
-        docLimit: 5
+        topK: 6,
+        docLimit: 15
       })
       .expect(200);
 
@@ -89,10 +89,12 @@ describe('POST /api/qa', () => {
       .send({
         question: 'What is this document about?'
       })
-      .expect(502);
+      .expect(200);
 
-    expect(response.body).toHaveProperty('error');
-    expect(response.body.error).toHaveProperty('code', 'LLM_ERROR');
+    expect(response.body).toHaveProperty('answer');
+    expect(response.body).toHaveProperty('based_on_docs');
+    expect(response.body).toHaveProperty('llm');
+    expect(response.body.llm).toHaveProperty('used', false);
   });
 
   test('should return answer when no chunks found', async () => {
@@ -101,8 +103,8 @@ describe('POST /api/qa', () => {
       .post('/api/qa')
       .send({
         question: 'xyzabc123nonexistent',
-        topK: 5,
-        docLimit: 5
+        topK: 6,
+        docLimit: 15
       })
       .expect(200);
 
@@ -130,6 +132,27 @@ describe('POST /api/qa', () => {
 
     expect(response.body.retrieval).toHaveProperty('topK', 3);
     expect(response.body.retrieval).toHaveProperty('docLimit', 2);
+  });
+
+  test('should ignore docId and still answer using all documents', async () => {
+    await request(app).post('/api/docs/upload').attach('file', sampleTxtPath).expect(201);
+
+    geminiService.generateAnswer.mockResolvedValue({
+      answer: 'Test answer',
+      citations: [],
+      confidence: 'low'
+    });
+
+    const response = await request(app)
+      .post('/api/qa')
+      .send({
+        question: 'What is this document about?',
+        docId: 'non-existent-id'
+      })
+      .expect(200);
+
+    expect(response.body).toHaveProperty('answer');
+    expect(geminiService.generateAnswer).toHaveBeenCalled();
   });
 });
 

@@ -7,12 +7,52 @@ const geminiService = require('../services/geminiService');
 const AppError = require('../errors/AppError');
 const { buildBasedOnDocs } = require('../utils/citations');
 
+function buildRetrievalFallbackAnswer(question, basedOnDocs) {
+  const citations = Array.isArray(basedOnDocs) ? basedOnDocs : [];
+  if (citations.length === 0) {
+    return 'Bilmiyorum. Yeterli kaynak bulunamadı.';
+  }
+
+  const lines = [
+    'LLM şu anda yanıt üretemedi. Dokümanlarda soruyla ilgili geçen bölümler:',
+    ''
+  ];
+
+  for (const c of citations.slice(0, 3)) {
+    const name = c.docName || c.docId || 'Doküman';
+    const quote = (c.quote || '').toString().trim();
+    lines.push(`- ${name}: ${quote ? `"${quote}"` : '(alıntı yok)'}`);
+  }
+
+  lines.push('');
+  lines.push('Bu alıntılara göre yanıtı daraltmak istersen soruyu biraz daha spesifikleştirebilirsin.');
+  return lines.join('\n');
+}
+
+function coercePlainAnswerText(value) {
+  const s = (value == null) ? '' : String(value);
+  const trimmed = s.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith('{') && trimmed.includes('"answer"')) {
+    // Best-effort: extract answer field from a JSON-ish string
+    const m = trimmed.match(/"answer"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+    if (m && typeof m[1] === 'string') {
+      try {
+        return JSON.parse(`"${m[1]}"`).trim();
+      } catch (_) {
+        return m[1].trim();
+      }
+    }
+  }
+  return trimmed;
+}
+
 /**
  * Answer a question using RAG
  */
 exports.answerQuestion = async (req, res, next) => {
   try {
-    const { question, topK = 5, docLimit = 5, docId } = req.body;
+    const { question, topK = 6, docLimit = 15 } = req.body;
 
     // Validation
     if (!question || !question.trim()) {
@@ -23,29 +63,16 @@ exports.answerQuestion = async (req, res, next) => {
     }
 
     // Validate and sanitize parameters
-    const safeTopK = Math.min(Math.max(parseInt(topK) || 5, 1), 8);
-    const safeDocLimit = Math.min(Math.max(parseInt(docLimit) || 5, 1), 10);
-    
-    // If docId is provided, validate it exists
-    let targetDocId = null;
-    if (docId && docId.trim()) {
-      const documentsRepo = require('../repositories/documentsRepo');
-      const doc = documentsRepo.getDocumentById(docId.trim());
-      if (!doc) {
-        const error = new Error('Document not found');
-        error.statusCode = 404;
-        error.code = 'NOT_FOUND';
-        return next(error);
-      }
-      targetDocId = docId.trim();
-    }
+    // Q&A intentionally searches across ALL documents (no docId filtering in UI)
+    const safeTopK = Math.min(Math.max(parseInt(topK) || 6, 1), 10);
+    const safeDocLimit = Math.min(Math.max(parseInt(docLimit) || 15, 1), 25);
 
     // Retrieve relevant chunks
     const chunks = await retrievalService.retrieveChunks(
       question.trim(),
       safeDocLimit,
       safeTopK,
-      targetDocId
+      null
     );
 
     // If no chunks found, return early
@@ -67,20 +94,33 @@ exports.answerQuestion = async (req, res, next) => {
     try {
       geminiResponse = await geminiService.generateAnswer(question.trim(), chunks);
     } catch (error) {
-      // Check if it's an API key error
-      if (error.message.includes('GEMINI_API_KEY')) {
-        const apiError = new Error('GEMINI_API_KEY is not configured');
-        apiError.statusCode = 500;
-        apiError.code = 'CONFIG_ERROR';
-        return next(apiError);
+      // Instead of failing the whole UX, return a retrieval-based fallback answer.
+      // The UI still gets "based_on_docs" so the user can see which documents were used.
+      let basedOnDocsFallback = [];
+      try {
+        basedOnDocsFallback = buildBasedOnDocs({
+          llmCitations: null,
+          retrievedChunks: chunks,
+          maxCitations: 3
+        });
+      } catch (_) {
+        basedOnDocsFallback = [];
       }
 
-      // Other Gemini errors
-      const llmError = new Error('LLM error');
-      llmError.statusCode = 502;
-      llmError.code = 'LLM_ERROR';
-      llmError.cause = error;
-      return next(llmError);
+      return res.status(200).json({
+        question: question.trim(),
+        answer: buildRetrievalFallbackAnswer(question.trim(), basedOnDocsFallback),
+        confidence: 'low',
+        based_on_docs: basedOnDocsFallback,
+        retrieval: {
+          docLimit: safeDocLimit,
+          topK: safeTopK
+        },
+        llm: {
+          used: false,
+          error: 'LLM_ERROR'
+        }
+      });
     }
 
     // Build standardized citations:
@@ -100,12 +140,16 @@ exports.answerQuestion = async (req, res, next) => {
     // Response
     res.status(200).json({
       question: question.trim(),
-      answer: geminiResponse.answer,
+      answer: coercePlainAnswerText(geminiResponse.answer),
       confidence: geminiResponse.confidence || 'medium',
       based_on_docs: basedOnDocs,
       retrieval: {
         docLimit: safeDocLimit,
         topK: safeTopK
+      },
+      llm: {
+        used: true,
+        model: geminiResponse.model || null
       }
     });
   } catch (error) {
