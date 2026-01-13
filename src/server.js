@@ -17,6 +17,17 @@ const server = app.listen(PORT, () => {
   console.log(`Health check: http://localhost:${PORT}/health`);
 });
 
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`[SERVER] Port ${PORT} is already in use.`);
+    console.error(`[SERVER] Stop the other process using the port, or start with a different port:`);
+    console.error(`[SERVER]   PowerShell: $env:PORT=3001; npm run dev`);
+    process.exit(1);
+  }
+  console.error('[SERVER] Failed to start server:', err);
+  process.exit(1);
+});
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');

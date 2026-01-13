@@ -3,7 +3,6 @@ import { postJSON } from '../api.js';
 
 export default function QAPanel({ documents = [] }) {
   const [question, setQuestion] = useState('');
-  const [selectedDocId, setSelectedDocId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -23,15 +22,10 @@ export default function QAPanel({ documents = [] }) {
     try {
       const requestBody = {
         question: trimmed,
-        topK: 5,
-        docLimit: 5
+        topK: 6,
+        docLimit: 15
       };
-      
-      // If a document is selected, add docId to request
-      if (selectedDocId) {
-        requestBody.docId = selectedDocId;
-      }
-      
+
       const response = await postJSON('/api/qa', requestBody);
       setResult(response);
     } catch (err) {
@@ -43,7 +37,6 @@ export default function QAPanel({ documents = [] }) {
 
   function handleClear() {
     setQuestion('');
-    setSelectedDocId('');
     setError('');
     setResult(null);
   }
@@ -53,23 +46,8 @@ export default function QAPanel({ documents = [] }) {
       <div className="cardHeader">
         <h2>Soru-Cevap (Q&A)</h2>
         <p className="muted">
-          {selectedDocId ? 'Seçili doküman için soru sorun' : 'Tüm dokümanlar için soru sorun'}
+          Tüm dokümanlar içinde soru sorun
         </p>
-      </div>
-
-      <div style={{ marginBottom: '14px' }}>
-        <select
-          value={selectedDocId}
-          onChange={(e) => setSelectedDocId(e.target.value)}
-          disabled={loading}
-        >
-          <option value="">Tüm Dokümanlar</option>
-          {documents.map((doc) => (
-            <option key={doc.id} value={doc.id}>
-              {doc.originalName || doc.id}
-            </option>
-          ))}
-        </select>
       </div>
 
       <form className="row" onSubmit={handleSubmit}>
@@ -100,9 +78,6 @@ export default function QAPanel({ documents = [] }) {
           <div className="qaAnswer">
             <div className="label">Cevap</div>
             <div className="value">{result.answer}</div>
-            <div className="qaConfidence">
-              Güven: <span className={`confidence-${result.confidence}`}>{result.confidence}</span>
-            </div>
           </div>
 
           {result.based_on_docs && result.based_on_docs.length > 0 ? (

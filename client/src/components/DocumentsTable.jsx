@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { downloadFile } from '../api.js';
+import { deleteJSON, downloadFile } from '../api.js';
 import DocumentDetail from './DocumentDetail.jsx';
+import UploadModal from './UploadModal.jsx';
+import QAModal from './QAModal.jsx';
 
 function formatKB(bytes) {
   if (typeof bytes !== 'number') return '-';
@@ -15,12 +17,16 @@ export default function DocumentsTable({
   offset,
   onPrev,
   onNext,
-  onRefresh
+  onRefresh,
+  onUploadSuccess
 }) {
   const results = data?.results || [];
   const total = data?.total;
   const [selectedDocId, setSelectedDocId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [qaOpen, setQaOpen] = useState(false);
 
   const canPrev = offset > 0 && !loading;
   const canNext =
@@ -39,6 +45,23 @@ export default function DocumentsTable({
     }
   }
 
+  async function handleDelete(doc) {
+    if (!doc?.id) return;
+    const ok = window.confirm(`"${doc.originalName || 'Doküman'}" silinsin mi? Bu işlem geri alınamaz.`);
+    if (!ok) return;
+
+    setDeletingId(doc.id);
+    try {
+      await deleteJSON(`/api/docs/${doc.id}`);
+      if (selectedDocId === doc.id) setSelectedDocId(null);
+      await onRefresh?.();
+    } catch (err) {
+      alert(err?.message || 'Silme başarısız');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <>
       <section className="card">
@@ -52,6 +75,12 @@ export default function DocumentsTable({
             </p>
           </div>
           <div className="row">
+            <button className="btn primary" onClick={() => setUploadOpen(true)} disabled={loading}>
+              Upload
+            </button>
+            <button className="btn" onClick={() => setQaOpen(true)} disabled={loading}>
+              Soru-Cevap
+            </button>
             <button className="btn" onClick={onRefresh} disabled={loading}>
               {loading ? 'Loading…' : 'Refresh'}
             </button>
@@ -96,6 +125,14 @@ export default function DocumentsTable({
                         >
                           {downloadingId === d.id ? 'İndiriliyor…' : 'İndir'}
                         </button>
+                        <button
+                          className="btn"
+                          onClick={() => handleDelete(d)}
+                          disabled={deletingId === d.id}
+                          style={{ fontSize: '12px', padding: '6px 10px' }}
+                        >
+                          {deletingId === d.id ? 'Siliniyor…' : 'Kaldır'}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -129,6 +166,18 @@ export default function DocumentsTable({
       {selectedDocId && (
         <DocumentDetail docId={selectedDocId} onClose={() => setSelectedDocId(null)} />
       )}
+
+      {uploadOpen && (
+        <UploadModal
+          onClose={() => setUploadOpen(false)}
+          onUploaded={async () => {
+            // New docs appear on the first page (sorted by createdAt DESC)
+            await onUploadSuccess?.();
+          }}
+        />
+      )}
+
+      {qaOpen && <QAModal onClose={() => setQaOpen(false)} />}
     </>
   );
 }

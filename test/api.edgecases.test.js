@@ -148,7 +148,7 @@ describe('Edge-cases', () => {
   });
 
   describe('D) Summary edge-cases', () => {
-    test('7) summary/short when extraction fails -> 422 EXTRACTION_FAILED', async () => {
+    test('7) summary when extraction fails -> 422 EXTRACTION_FAILED', async () => {
       const documentsRepo = require('../src/repositories/documentsRepo');
       const textExtractor = require('../src/services/textExtractor');
 
@@ -165,32 +165,13 @@ describe('Edge-cases', () => {
       });
 
       const res = await request(app)
-        .post(`/api/docs/${doc.id}/summary/short`)
+        .post(`/api/docs/${doc.id}/summary`)
         .expect(422);
 
       expect(res.body).toHaveProperty('error');
       expect(res.body.error).toHaveProperty('code', 'EXTRACTION_FAILED');
 
       spy.mockRestore();
-    });
-
-    test('8) invalid long summary params -> 400 BAD_REQUEST', async () => {
-      const sampleTxtPath = path.join(__dirname, 'fixtures', 'sample.txt');
-      const uploadRes = await request(app).post('/api/docs/upload').attach('file', sampleTxtPath).expect(201);
-      const docId = uploadRes.body.id;
-
-      await request(app)
-        .post(`/api/docs/${docId}/summary/long`)
-        .send({ level: 'mega', format: 'structured' })
-        .expect(400);
-
-      const res2 = await request(app)
-        .post(`/api/docs/${docId}/summary/long`)
-        .send({ level: 'medium', format: 'weird' })
-        .expect(400);
-
-      expect(res2.body).toHaveProperty('error');
-      expect(res2.body.error).toHaveProperty('code', 'BAD_REQUEST');
     });
   });
 });
